@@ -967,6 +967,23 @@ def generate_state_dict(
 
         state_dict[key] = model_sd
 
+        grad_reducer_sd_fn = getattr(model[i], 'grad_reducer_state_dict', None)
+        if callable(grad_reducer_sd_fn):
+            grad_reducer_sd = grad_reducer_sd_fn()
+            if grad_reducer_sd is not None:
+                grad_reducer_key = "grad_reducer" if len(model) == 1 else f"grad_reducer{i}"
+                if args.ckpt_format == "torch_dist":
+                    tp_group = mpu.get_tensor_model_parallel_group()
+                    pp_group = mpu.get_pipeline_model_parallel_group()
+                    grad_reducer_sd = ShardedObject(
+                        grad_reducer_key,
+                        grad_reducer_sd,
+                        (get_pg_size(pp_group), get_pg_size(tp_group)),
+                        (get_pg_rank(pp_group), get_pg_rank(tp_group)),
+                        replica_id=mpu.get_data_parallel_rank(with_context_parallel=True),
+                    )
+                state_dict[grad_reducer_key] = grad_reducer_sd
+
     # Optimizer stuff.
     if not args.no_save_optim:
         if optimizer is not None and not optimizer.is_stub_optimizer:
@@ -1855,6 +1872,14 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
                 if 'model%d' % i not in state_dict:
                     continue
                 load_model_state_dict(ddp_model[i], state_dict['model%d' % i], strict)
+
+        for i in range(len(ddp_model)):
+            grad_reducer_key = "grad_reducer" if len(ddp_model) == 1 else f"grad_reducer{i}"
+            if grad_reducer_key not in state_dict:
+                continue
+            load_grad_reducer_fn = getattr(ddp_model[i], 'load_grad_reducer_state_dict', None)
+            if callable(load_grad_reducer_fn):
+                load_grad_reducer_fn(state_dict[grad_reducer_key])
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
     print_rank_0(f' checkpoint version {checkpoint_version}')

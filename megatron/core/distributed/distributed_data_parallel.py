@@ -14,6 +14,10 @@ from ..transformer.transformer_config import TransformerConfig
 from ..utils import log_single_rank
 from .data_parallel_base import _BaseDataParallel
 from .distributed_data_parallel_config import DistributedDataParallelConfig
+from .fp8_topk_adams_reducer import (
+    TopKPerLayerSyncMomentumAdamSFP8ReducerV2,
+    TopKPerLayerSyncMomentumAdamSReducerV2,
+)
 from .param_and_grad_buffer import _ParamAndGradBuffer, partition_buckets
 
 logger = logging.getLogger(__name__)
@@ -304,6 +308,19 @@ class DistributedDataParallel(_BaseDataParallel):
             )
         )
 
+        self.topk_adams_reducer = None
+        if self.ddp_config.use_topk_adams_reducer:
+            reducer_cls = (
+                TopKPerLayerSyncMomentumAdamSFP8ReducerV2
+                if self.ddp_config.use_fp8_topk_quant
+                else TopKPerLayerSyncMomentumAdamSReducerV2
+            )
+            self.topk_adams_reducer = reducer_cls(
+                buffers=self.buffers + self.expert_parallel_buffers,
+                ddp_config=self.ddp_config,
+            )
+            self._topk_reducer_train_iter = 0
+
         # Delete references to weight_tensor if they exist since we don't want two parameter copies
         # if we re-mapped parameters (which happens when we use the distributed optimizer).
         # This is a temporary workaround around a TE bug that is fixed with
@@ -531,6 +548,8 @@ class DistributedDataParallel(_BaseDataParallel):
         calls. When overlap_grad_reduce is set to False, calls synchronous
         communication ops.
         """
+        if self.topk_adams_reducer is not None:
+            return
         for bucket_group in self.bucket_groups + self.expert_parallel_bucket_groups:
             bucket_group.start_grad_sync()
 
@@ -543,8 +562,49 @@ class DistributedDataParallel(_BaseDataParallel):
         calls to complete. When overlap_grad_reduce is set to False, calls synchronous
         communication ops.
         """
+        if self.topk_adams_reducer is not None:
+            train_iter = getattr(self, "_topk_reducer_train_iter", 0)
+            self.topk_adams_reducer.reduce(
+                train_iter=train_iter,
+                force_all_reduce=force_all_reduce,
+            )
+            return
         for bucket_group in self.bucket_groups + self.expert_parallel_bucket_groups:
             bucket_group.finish_grad_sync(force_all_reduce=force_all_reduce)
+
+    def set_topk_reducer_optimizer(self, optimizer):
+        """Attach optimizer to top-k reducer when enabled."""
+        if self.topk_adams_reducer is None:
+            return
+        self.topk_adams_reducer.set_optimizer(optimizer)
+
+    def prepare_reducer_pre_forward(self, train_iter: int):
+        """Prepare reducer state before forward/backward for this iteration."""
+        if self.topk_adams_reducer is None:
+            return
+        self._topk_reducer_train_iter = int(train_iter)
+        self.topk_adams_reducer.prepare_pre_forward(int(train_iter))
+
+    def grad_reducer_state_dict(self):
+        """Return state dict for top-k reducer, if enabled."""
+        if self.topk_adams_reducer is None:
+            return None
+        return self.topk_adams_reducer.state_dict()
+
+    def load_grad_reducer_state_dict(self, state_dict):
+        """Load state dict for top-k reducer, if enabled."""
+        if self.topk_adams_reducer is None or state_dict is None:
+            return
+        self.topk_adams_reducer.load_state_dict(state_dict)
+
+    def get_topk_reducer_synced_grad_norm(self) -> Optional[float]:
+        """Return reducer-side synced-gradient norm, if available."""
+        if self.topk_adams_reducer is None:
+            return None
+        get_norm_fn = getattr(self.topk_adams_reducer, 'get_last_synced_grad_norm', None)
+        if not callable(get_norm_fn):
+            return None
+        return get_norm_fn()
 
     def free_overlap_buffers(self):
         """Free overlap param-gather GPU buffers across all bucket groups."""

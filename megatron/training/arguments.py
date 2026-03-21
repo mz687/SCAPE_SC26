@@ -902,6 +902,24 @@ def validate_args(args, defaults={}):
         assert not args.use_dist_ckpt, \
             '--overlap-param-gather-with-optimizer-step not supported with distributed checkpointing yet'
 
+    if args.use_topk_adams_reducer:
+        assert args.optimizer == 'adams', \
+            '--use-topk-adams-reducer requires --optimizer adams'
+        assert not args.overlap_grad_reduce, \
+            '--use-topk-adams-reducer does not support --overlap-grad-reduce'
+        assert not args.use_distributed_optimizer, \
+            '--use-topk-adams-reducer does not support --use-distributed-optimizer'
+        assert not args.use_torch_fsdp2 and not args.use_megatron_fsdp, \
+            '--use-topk-adams-reducer is supported only on standard MCore DDP path'
+        assert 0.0 < args.topk_adams_density <= 1.0, \
+            '--topk-adams-density must be in (0, 1]'
+        assert 0.0 < args.topk_adams_density_start <= 1.0, \
+            '--topk-adams-density-start must be in (0, 1]'
+        assert args.topk_adams_start_iter >= 0, \
+            '--topk-adams-start-iter must be >= 0'
+        assert args.topk_adams_density_warmup_steps >= 0, \
+            '--topk-adams-density-warmup-steps must be >= 0'
+
     # Map string data-type to torch.dtype.
     dtype_map = {
         'fp32': torch.float32, 'bf16': torch.bfloat16, 'fp16': torch.float16, 'fp8': torch.uint8, 'auto': None,
@@ -2678,6 +2696,18 @@ def _add_distributed_args(parser):
                        dest='scatter_gather_tensors_in_pipeline')
     group.add_argument('--use-distributed-optimizer', action='store_true',
                        help='Use distributed optimizer.')
+    group.add_argument('--use-topk-adams-reducer', action='store_true', default=False,
+                       help='Enable TopKPerLayerSyncMomentumAdamS reducer for DDP gradients.')
+    group.add_argument('--topk-adams-density', type=float, default=0.1,
+                       help='Target top-k density used by top-k AdamS reducer.')
+    group.add_argument('--topk-adams-start-iter', type=int, default=0,
+                       help='Iteration to start sparse top-k communication.')
+    group.add_argument('--topk-adams-density-start', type=float, default=1.0,
+                       help='Initial top-k density before warmup reaches target density.')
+    group.add_argument('--topk-adams-density-warmup-steps', type=int, default=0,
+                       help='Number of warmup steps from density-start to density.')
+    group.add_argument('--use-fp8-topk-quant', action='store_true', default=False,
+                       help='Quantize sparse top-k payloads to FP8 before synchronization.')
     group.add_argument('--use-nccl-ub', action='store_true', dest='nccl_ub',
                        help='Use the userbuffer registration for DP/FSDP communication buffers.'
                        'This option will reduce GPU SM usage for the DP/FSDP communication,'

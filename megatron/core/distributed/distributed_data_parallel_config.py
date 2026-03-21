@@ -191,12 +191,59 @@ class DistributedDataParallelConfig:
       No additional memory is allocated when `grad_comm_dtype == main_grads_dtype`.
     """
 
+    use_topk_adams_reducer: bool = False
+    """If true, replace default grad all-reduce path with Top-K AdamS reducer."""
+
+    topk_adams_density: float = 0.1
+    """Target top-k density used by Top-K AdamS reducer."""
+
+    topk_adams_start_iter: int = 0
+    """Iteration to start sparse top-k communication."""
+
+    topk_adams_density_start: float = 1.0
+    """Initial top-k density used before warmup reaches target density."""
+
+    topk_adams_density_warmup_steps: int = 0
+    """Number of steps to linearly warm up density from start to target."""
+
+    use_fp8_topk_quant: bool = False
+    """If true, use FP8 quantized sparse payloads in Top-K AdamS reducer."""
+
     def __post_init__(self):
         import os
 
         """Check the validity of the config."""
         if self.reuse_grad_buf_for_mxfp8_param_ag:
             assert self.fp8_param_gather, "Reuse grad buffer only when keeping params in MXFP8."
+
+        if self.use_topk_adams_reducer:
+            if self.overlap_grad_reduce:
+                raise ValueError(
+                    "Top-K AdamS reducer does not support overlap_grad_reduce. "
+                    "Disable --overlap-grad-reduce."
+                )
+            if self.use_distributed_optimizer:
+                raise ValueError(
+                    "Top-K AdamS reducer does not support distributed optimizer."
+                )
+            if not (0.0 < self.topk_adams_density <= 1.0):
+                raise ValueError(
+                    f"topk_adams_density must be in (0, 1], got {self.topk_adams_density}."
+                )
+            if not (0.0 < self.topk_adams_density_start <= 1.0):
+                raise ValueError(
+                    "topk_adams_density_start must be in (0, 1], "
+                    f"got {self.topk_adams_density_start}."
+                )
+            if self.topk_adams_density_warmup_steps < 0:
+                raise ValueError(
+                    "topk_adams_density_warmup_steps must be >= 0, "
+                    f"got {self.topk_adams_density_warmup_steps}."
+                )
+            if self.topk_adams_start_iter < 0:
+                raise ValueError(
+                    f"topk_adams_start_iter must be >= 0, got {self.topk_adams_start_iter}."
+                )
 
         if self.nccl_ub:
             if 'expandable_segments:True' in os.getenv('PYTORCH_CUDA_ALLOC_CONF', '').split(','):

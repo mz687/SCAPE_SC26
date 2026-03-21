@@ -1532,7 +1532,59 @@ def get_megatron_optimizer_config(args: Any) -> OptimizerConfig:
     #  can be added to as needed by the user, or replaced entirely with a custom override.
     config_overrides = get_standard_config_overrides(config=config)
 
+    # Top-K AdamS reducer writes AdamS metrics directly into grad buffers.
+    # The wrapped optimizer must therefore be plain SGD with no momentum/weight-decay.
+    if getattr(args, "use_topk_adams_reducer", False):
+        config.optimizer = 'sgd'
+        config.sgd_momentum = 0.0
+        config.weight_decay = 0.0
+        # Reducer already writes preconditioned AdamS update metrics into grads.
+        # Global grad clipping at optimizer level would clip those metrics
+        # (not raw gradients) and can collapse effective step size.
+        config.clip_grad = 0.0
+
     return config, config_overrides
+
+
+def _configure_topk_adams_reducer_runtime(model, optimizer, args):
+    """Attach optimizer and weight-decay metadata required by top-k AdamS reducer."""
+    if not getattr(args, "use_topk_adams_reducer", False):
+        return
+    if optimizer is None:
+        return
+
+    for param_group in optimizer.param_groups:
+        wd_mult = float(param_group.get('wd_mult', 1.0))
+        param_group['weight_decay_reducer'] = float(args.weight_decay) * wd_mult
+        param_group['betas'] = (float(args.adam_beta1), float(args.adam_beta2))
+        param_group['eps'] = float(args.adam_eps)
+        param_group['bias_correction'] = True
+
+    for model_chunk in model:
+        set_optimizer_fn = getattr(model_chunk, 'set_topk_reducer_optimizer', None)
+        if callable(set_optimizer_fn):
+            set_optimizer_fn(optimizer)
+
+
+def _get_topk_reducer_synced_grad_norm(model) -> Optional[float]:
+    """Collect synced-gradient norm from top-k reducer-enabled model chunks."""
+    total_sq = 0.0
+    has_value = False
+    for model_chunk in model:
+        get_norm_fn = getattr(model_chunk, 'get_topk_reducer_synced_grad_norm', None)
+        if not callable(get_norm_fn):
+            continue
+        value = get_norm_fn()
+        if value is None:
+            continue
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            continue
+        total_sq += value * value
+        has_value = True
+    if not has_value:
+        return None
+    return math.sqrt(total_sq)
 
 
 def setup_model_and_optimizer(
@@ -1705,6 +1757,8 @@ def setup_model_and_optimizer(
         torch.distributed.barrier()
         exit()
 
+    _configure_topk_adams_reducer_runtime(model, optimizer, args)
+
     return model, optimizer, opt_param_scheduler
 
 
@@ -1765,6 +1819,12 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                     if isinstance(optim_instance, DistributedOptimizer):
                         optim_instance._copy_main_params_to_param_buffer()
 
+        current_iter = int(args.iteration if iteration is None else iteration)
+        for model_chunk in model:
+            prepare_fn = getattr(model_chunk, 'prepare_reducer_pre_forward', None)
+            if callable(prepare_fn):
+                prepare_fn(current_iter)
+
         # Forward pass.
         if save_dgrads_in_this_iteration:
             enable_dgrad_logging(model, args.save)
@@ -1820,6 +1880,10 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
 
     timers('optimizer', log_level=1).start(barrier=args.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+    if getattr(args, "use_topk_adams_reducer", False):
+        synced_grad_norm = _get_topk_reducer_synced_grad_norm(model)
+        if synced_grad_norm is not None:
+            grad_norm = synced_grad_norm
 
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
