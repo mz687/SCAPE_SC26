@@ -1,6 +1,19 @@
 <div align="center">
 
-Megatron-LM and Megatron Core
+# NOTE this Megatron-LM is used for TBD (currently called SCAPE) project to pre-train llama2-500M model with AdamS optimizer. Here are the details of the model and dataset
+- Model: H2O-500M
+- Dataset: SlimPajama-6B
+- hyperparameters
+  - pre-train dataset: slimpajama-6B
+  -  global batch size: 1024
+  -  sequence length: 4096 tokens
+  -  number of steps: 10,000
+  -  lr warmup steps (3%): 300
+  -  peak lr: 3e-4
+  -  min lr: 3e-5
+  -  betas: (0.9, 0.95)
+  -  lr scheduler: consine
+  -  Megatron-LM and Megatron Core
 =============================
 
 <h4>GPU-optimized library for training transformer models at scale</h4>

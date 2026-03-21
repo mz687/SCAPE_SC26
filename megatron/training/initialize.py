@@ -36,6 +36,102 @@ from megatron.training.utils import is_rank0
 from megatron.training.yaml_arguments import validate_yaml
 
 logger = logging.getLogger(__name__)
+_TRITON_LIBCUDA_FIX_ATTEMPTED = False
+_TRITON_LIBCUDA_FIX_DIR = None
+_TRITON_CACHE_FIX_ATTEMPTED = False
+_TRITON_CACHE_DIR = None
+
+
+def _prepend_env_path(var_name, value):
+    if not value:
+        return
+    cur = os.environ.get(var_name, "")
+    if not cur:
+        os.environ[var_name] = value
+        return
+    parts = [p for p in cur.split(":") if p]
+    if value in parts:
+        return
+    os.environ[var_name] = f"{value}:{cur}"
+
+
+def _prepare_triton_cache_dir():
+    global _TRITON_CACHE_FIX_ATTEMPTED
+    global _TRITON_CACHE_DIR
+
+    if _TRITON_CACHE_FIX_ATTEMPTED:
+        return _TRITON_CACHE_DIR
+    _TRITON_CACHE_FIX_ATTEMPTED = True
+
+    existing = os.environ.get("TRITON_CACHE_DIR")
+    if existing:
+        os.makedirs(existing, exist_ok=True)
+        _TRITON_CACHE_DIR = existing
+        return existing
+
+    uid = "nouid"
+    if hasattr(os, "getuid"):
+        try:
+            uid = str(os.getuid())
+        except OSError:
+            uid = "nouid"
+    job_id = os.environ.get("SLURM_JOB_ID", "nojid")
+    rank = os.environ.get("SLURM_PROCID", os.environ.get("RANK", "0"))
+    cache_dir = f"/tmp/triton_cache_u{uid}_j{job_id}_r{rank}"
+    os.makedirs(cache_dir, exist_ok=True)
+    os.environ["TRITON_CACHE_DIR"] = cache_dir
+    _TRITON_CACHE_DIR = cache_dir
+    return cache_dir
+
+
+def _prepare_triton_libcuda_symlink():
+    _prepare_triton_cache_dir()
+    global _TRITON_LIBCUDA_FIX_ATTEMPTED
+    global _TRITON_LIBCUDA_FIX_DIR
+
+    if _TRITON_LIBCUDA_FIX_ATTEMPTED:
+        return _TRITON_LIBCUDA_FIX_DIR
+    _TRITON_LIBCUDA_FIX_ATTEMPTED = True
+
+    candidates = [
+        "/usr/local/cuda-12.8/compat/lib.real/libcuda.so.1",
+        "/usr/local/cuda/compat/lib/libcuda.so.1",
+        "/usr/local/cuda-13.1/compat/lib.real/libcuda.so.1",
+        "/usr/local/cuda/compat/lib.real/libcuda.so.1",
+    ]
+    source = None
+    for path in candidates:
+        if os.path.exists(path):
+            source = path
+            break
+
+    if source is None:
+        _TRITON_LIBCUDA_FIX_DIR = None
+        return None
+
+    fix_dir = "/tmp/triton_libcuda_fix"
+    os.makedirs(fix_dir, exist_ok=True)
+
+    link_so1 = os.path.join(fix_dir, "libcuda.so.1")
+    link_so = os.path.join(fix_dir, "libcuda.so")
+
+    for link_path, target in ((link_so1, source), (link_so, source)):
+        if os.path.islink(link_path) or os.path.exists(link_path):
+            try:
+                os.unlink(link_path)
+            except OSError:
+                pass
+        if not os.path.exists(link_path):
+            os.symlink(target, link_path)
+
+    source_dir = os.path.dirname(source)
+    _prepend_env_path("LD_LIBRARY_PATH", fix_dir)
+    _prepend_env_path("LIBRARY_PATH", fix_dir)
+    _prepend_env_path("LD_LIBRARY_PATH", source_dir)
+    _prepend_env_path("LIBRARY_PATH", source_dir)
+    os.environ["TRITON_LIBCUDA_PATH"] = fix_dir
+    _TRITON_LIBCUDA_FIX_DIR = fix_dir
+    return fix_dir
 
 
 def initialize_megatron(
@@ -473,6 +569,8 @@ def write_args_to_tensorboard():
 
 def set_jit_fusion_options():
     """Set PyTorch JIT layer fusion options."""
+    _prepare_triton_libcuda_symlink()
+
     # flags required to enable jit fusion kernels
     if is_torch_min_version("2.2.0a0"):
         pass  # we're using torch.compile for jit fusion

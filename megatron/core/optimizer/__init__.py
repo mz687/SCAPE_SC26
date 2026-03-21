@@ -53,6 +53,7 @@ from megatron.core.transformer.fsdp_dtensor_checkpoint import get_global_unique_
 from ..distributed.param_and_grad_buffer import _ParamAndGradBuffer
 from ..transformer.module import MegatronModule
 from ..utils import get_model_config, get_pg_rank, get_pg_size, is_te_min_version, log_single_rank
+from .AdamS import AdamS
 from .distrib_optimizer import DistributedOptimizer
 from .grad_scaler import ConstantGradScaler, DynamicGradScaler
 from .optimizer import (
@@ -456,6 +457,10 @@ def _get_megatron_optimizer_based_on_param_groups(
     # for the purposes of grad stats reductions.
     if param_groups:
         if config.optimizer_cpu_offload:
+            if config.optimizer == 'adams':
+                raise Exception(
+                    f'{config.optimizer} optimizer with --optimizer-cpu-offload is not supported.'
+                )
             if torch.__version__ < '2.3.0':
                 warnings.warn(
                     "CPU offload is recommended for PyTorch >= 2.3.0, "
@@ -549,6 +554,23 @@ def _get_megatron_optimizer_based_on_param_groups(
                                 opt.state[p]['exp_avg_sq'] = torch.zeros_like(p.data)
                             else:
                                 opt.initialize_state(p)
+
+        elif config.optimizer == 'adams':
+            optimizer = AdamS(
+                params=param_groups,
+                lr=config.lr,
+                weight_decay=config.weight_decay,
+                betas=(config.adam_beta1, config.adam_beta2),
+                eps=config.adam_eps,
+                adam_w_mode=config.decoupled_weight_decay,
+                bias_correction=True,
+            )
+
+            def init_state_fn(opt, config=None):
+                for group in opt.param_groups:
+                    for p in group['params']:
+                        if len(opt.state[p]) == 0:
+                            opt.state[p]['exp_avg'] = torch.zeros_like(p.data)
 
         elif config.optimizer == 'lion':
             if not HAVE_LION:
