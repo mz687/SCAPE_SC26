@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
+from .. import tensor_parallel
+from ..transformer.module import param_is_not_shared
 from .distributed_data_parallel_config import DistributedDataParallelConfig
 from .param_and_grad_buffer import _ParamAndGradBuffer
 
@@ -28,6 +30,19 @@ class _BufferState:
     next_mask_u8: torch.Tensor
     has_current_mask: bool = False
     has_next_mask: bool = False
+
+
+@dataclass
+class _PendingUpdate:
+    buffer_idx: int
+    start: int
+    end: int
+    param: torch.nn.Parameter
+    beta1: float
+    beta2: float
+    eps: float
+    bias_correction: bool
+    weight_decay: float
 
 
 class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
@@ -53,6 +68,7 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         self._warmup_steps = max(0, int(ddp_config.topk_adams_density_warmup_steps))
         self._start_iter = max(0, int(ddp_config.topk_adams_start_iter))
         self._use_fp8_topk_quant = bool(ddp_config.use_fp8_topk_quant)
+        self._move_clip_grad_to_reducer = bool(ddp_config.move_clip_grad_to_reducer)
 
         self._fp8_dtype = torch.float8_e5m2
         self._fp8_scale_eps = 1e-6
@@ -104,6 +120,8 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         self._last_synced_grad_norm: Optional[float] = None
         self._last_update_metric_norm: Optional[float] = None
         self._last_norm_step: Optional[int] = None
+        self._clip_grad_max_norm: float = 0.0
+        self._grad_stats_parallel_group: Optional[torch.distributed.ProcessGroup] = None
 
     @staticmethod
     def _iter_optimizer_wrappers(optimizer: Any) -> List[Any]:
@@ -135,6 +153,8 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         self._param_to_group.clear()
         self._param_to_state_dict.clear()
         self._param_to_optim_param.clear()
+        self._clip_grad_max_norm = 0.0
+        self._grad_stats_parallel_group = None
 
         optim_param_to_group: Dict[torch.Tensor, Dict[str, Any]] = {}
         optim_param_to_state_dict: Dict[torch.Tensor, Dict[torch.Tensor, Dict[str, Any]]] = {}
@@ -142,6 +162,20 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         for wrapper in self._iter_optimizer_wrappers(optimizer):
             if getattr(wrapper, 'is_stub_optimizer', False):
                 continue
+
+            wrapper_config = getattr(wrapper, 'config', None)
+            if wrapper_config is not None and hasattr(wrapper_config, 'clip_grad'):
+                self._clip_grad_max_norm = max(
+                    self._clip_grad_max_norm, float(getattr(wrapper_config, 'clip_grad', 0.0))
+                )
+
+            if self._grad_stats_parallel_group is None:
+                get_group_fn = getattr(wrapper, 'get_grad_stats_parallel_group', None)
+                if callable(get_group_fn):
+                    try:
+                        self._grad_stats_parallel_group = get_group_fn()
+                    except Exception:
+                        self._grad_stats_parallel_group = None
 
             inner_optimizer = getattr(wrapper, 'optimizer', wrapper)
             param_groups = getattr(inner_optimizer, 'param_groups', None)
@@ -480,6 +514,9 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         total_numel = 0
         synced_grad_sq_sum: Optional[torch.Tensor] = None
         update_metric_sq_sum: Optional[torch.Tensor] = None
+        move_clip_grad_to_reducer = bool(self._move_clip_grad_to_reducer)
+        pending_updates: List[_PendingUpdate] = []
+        synced_grad_buffers: List[Optional[torch.Tensor]] = [None] * len(self._buffers)
 
         for buffer_idx, buffer in enumerate(self._buffers):
             grad_data = buffer.grad_data
@@ -512,6 +549,14 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
                     self._warned_missing_mapping = True
                 self._reduce_dense_fallback(grad_data, group, state)
                 continue
+
+            if move_clip_grad_to_reducer and synced_grad_buffers[buffer_idx] is None:
+                if grad_data.dtype == torch.float32:
+                    synced_grad_buffers[buffer_idx] = grad_data
+                else:
+                    synced_grad_buffers[buffer_idx] = torch.empty_like(
+                        grad_data, dtype=torch.float32
+                    )
 
             if not state.has_current_mask:
                 if state.has_next_mask:
@@ -598,12 +643,6 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
                 else:
                     residual_slice.copy_(corrected)
 
-                exp_avg.copy_(synced_momentum.to(exp_avg.dtype))
-                param_state['momentum_buffer'] = param_state['exp_avg']
-
-                step = int(param_state.get('step', 0)) + 1
-                param_state['step'] = step
-
                 if abs(1.0 - beta1) < 1e-12:
                     synced_grad = torch.zeros_like(synced_momentum)
                 else:
@@ -611,7 +650,36 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
                 synced_grad.mul_(mask_slice.to(dtype=synced_grad.dtype))
                 if synced_grad_sq_sum is None:
                     synced_grad_sq_sum = torch.zeros((), dtype=torch.float64, device=synced_grad.device)
-                synced_grad_sq_sum.add_(synced_grad.to(torch.float64).pow(2).sum())
+                if param_is_not_shared(
+                    param
+                ) and tensor_parallel.param_is_not_tensor_parallel_duplicate(param):
+                    synced_grad_sq_sum.add_(synced_grad.to(torch.float64).pow(2).sum())
+
+                if move_clip_grad_to_reducer:
+                    synced_grad_buffer = synced_grad_buffers[buffer_idx]
+                    if synced_grad_buffer is None:
+                        raise RuntimeError("Internal error: synced_grad_buffer is not initialized.")
+                    synced_grad_buffer[start:end].copy_(synced_grad)
+                    pending_updates.append(
+                        _PendingUpdate(
+                            buffer_idx=buffer_idx,
+                            start=start,
+                            end=end,
+                            param=param,
+                            beta1=beta1,
+                            beta2=beta2,
+                            eps=eps,
+                            bias_correction=bias_correction,
+                            weight_decay=weight_decay,
+                        )
+                    )
+                    continue
+
+                exp_avg.copy_(synced_momentum.to(exp_avg.dtype))
+                param_state['momentum_buffer'] = param_state['exp_avg']
+
+                step = int(param_state.get('step', 0)) + 1
+                param_state['step'] = step
 
                 variance = exp_avg_prev * exp_avg_prev
                 variance.mul_(beta2)
@@ -635,7 +703,104 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
                 update = synced_momentum * inv_bias1
                 update.div_(denom)
                 if weight_decay != 0.0:
-                    update.add_(self._model_or_optim_param_flat(param).to(torch.float32), alpha=weight_decay)
+                    update.add_(
+                        self._model_or_optim_param_flat(param).to(torch.float32), alpha=weight_decay
+                    )
+                if update_metric_sq_sum is None:
+                    update_metric_sq_sum = torch.zeros((), dtype=torch.float64, device=update.device)
+                update_metric_sq_sum.add_(update.to(torch.float64).pow(2).sum())
+
+                grad_slice.copy_(update.to(grad_slice.dtype))
+
+        reduced_synced_grad_sq_sum: Optional[torch.Tensor] = None
+        if synced_grad_sq_sum is not None:
+            reduced_synced_grad_sq_sum = synced_grad_sq_sum.clone()
+            if (
+                self._grad_stats_parallel_group is not None
+                and torch.distributed.is_available()
+                and torch.distributed.is_initialized()
+                and self._group_size(self._grad_stats_parallel_group) > 1
+            ):
+                torch.distributed.all_reduce(
+                    reduced_synced_grad_sq_sum,
+                    op=torch.distributed.ReduceOp.SUM,
+                    group=self._grad_stats_parallel_group,
+                )
+
+        if move_clip_grad_to_reducer and pending_updates:
+            clip_coeff = 1.0
+            if (
+                self._clip_grad_max_norm > 0.0
+                and reduced_synced_grad_sq_sum is not None
+                and float(reduced_synced_grad_sq_sum.item()) > 0.0
+            ):
+                synced_grad_norm = float(
+                    torch.sqrt(torch.clamp_min(reduced_synced_grad_sq_sum, 0.0)).item()
+                )
+                clip_coeff = self._clip_grad_max_norm / (synced_grad_norm + 1.0e-6)
+
+            if clip_coeff < 1.0:
+                for pending in pending_updates:
+                    synced_grad_buffer = synced_grad_buffers[pending.buffer_idx]
+                    if synced_grad_buffer is None:
+                        raise RuntimeError(
+                            "Internal error: synced_grad_buffer is not initialized."
+                        )
+                    synced_grad_buffer[pending.start : pending.end].mul_(clip_coeff)
+
+            for pending in pending_updates:
+                synced_grad_buffer = synced_grad_buffers[pending.buffer_idx]
+                if synced_grad_buffer is None:
+                    raise RuntimeError("Internal error: synced_grad_buffer is not initialized.")
+
+                grad_data = self._buffers[pending.buffer_idx].grad_data
+                grad_slice = grad_data[pending.start : pending.end]
+                synced_grad = synced_grad_buffer[pending.start : pending.end].to(torch.float32)
+
+                param_state = self._ensure_optimizer_state_entry(pending.param)
+                exp_avg = param_state['exp_avg'].view(-1)
+                exp_avg_prev = exp_avg.to(torch.float32).clone()
+
+                mask_slice = (
+                    self._buffer_states[pending.buffer_idx]
+                    .current_mask_u8[pending.start : pending.end]
+                    .to(torch.float32)
+                )
+                synced_momentum = exp_avg_prev * pending.beta1
+                synced_momentum.add_(synced_grad, alpha=1.0 - pending.beta1)
+                synced_momentum.mul_(mask_slice)
+                exp_avg.copy_(synced_momentum.to(exp_avg.dtype))
+                param_state['momentum_buffer'] = param_state['exp_avg']
+
+                step = int(param_state.get('step', 0)) + 1
+                param_state['step'] = step
+
+                variance = exp_avg_prev * exp_avg_prev
+                variance.mul_(pending.beta2)
+                variance.addcmul_(synced_grad, synced_grad, value=1.0 - pending.beta2)
+
+                if pending.bias_correction:
+                    bias_correction1 = 1.0 - pending.beta1**step
+                    bias_correction2 = 1.0 - pending.beta2**step
+                    inv_bias1 = 1.0 / bias_correction1 if bias_correction1 != 0.0 else 1.0
+                    inv_sqrt_bias2 = (
+                        1.0 / math.sqrt(bias_correction2) if bias_correction2 > 0.0 else 1.0
+                    )
+                else:
+                    inv_bias1 = 1.0
+                    inv_sqrt_bias2 = 1.0
+
+                denom = variance.sqrt()
+                denom.mul_(inv_sqrt_bias2)
+                denom.add_(pending.eps)
+
+                update = synced_momentum * inv_bias1
+                update.div_(denom)
+                if pending.weight_decay != 0.0:
+                    update.add_(
+                        self._model_or_optim_param_flat(pending.param).to(torch.float32),
+                        alpha=pending.weight_decay,
+                    )
                 if update_metric_sq_sum is None:
                     update_metric_sq_sum = torch.zeros((), dtype=torch.float64, device=update.device)
                 update_metric_sq_sum.add_(update.to(torch.float64).pow(2).sum())
@@ -644,6 +809,10 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
 
         if synced_grad_sq_sum is None:
             self._last_synced_grad_norm = 0.0
+        elif reduced_synced_grad_sq_sum is not None:
+            self._last_synced_grad_norm = float(
+                torch.sqrt(torch.clamp_min(reduced_synced_grad_sq_sum, 0.0)).item()
+            )
         else:
             self._last_synced_grad_norm = float(
                 torch.sqrt(torch.clamp_min(synced_grad_sq_sum, 0.0)).item()

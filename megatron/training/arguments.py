@@ -919,6 +919,9 @@ def validate_args(args, defaults={}):
             '--topk-adams-start-iter must be >= 0'
         assert args.topk_adams_density_warmup_steps >= 0, \
             '--topk-adams-density-warmup-steps must be >= 0'
+    if args.move_clip_grad_to_reducer:
+        assert args.use_topk_adams_reducer, \
+            '--move-clip-grad-to-reducer requires --use-topk-adams-reducer'
 
     # Map string data-type to torch.dtype.
     dtype_map = {
@@ -2706,6 +2709,8 @@ def _add_distributed_args(parser):
                        help='Initial top-k density before warmup reaches target density.')
     group.add_argument('--topk-adams-density-warmup-steps', type=int, default=0,
                        help='Number of warmup steps from density-start to density.')
+    group.add_argument('--move-clip-grad-to-reducer', action='store_true', default=False,
+                       help='If set, perform global grad clipping inside top-k reducer on raw synced gradients.')
     group.add_argument('--use-fp8-topk-quant', action='store_true', default=False,
                        help='Quantize sparse top-k payloads to FP8 before synchronization.')
     group.add_argument('--use-nccl-ub', action='store_true', dest='nccl_ub',

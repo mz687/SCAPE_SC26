@@ -343,6 +343,9 @@ class OptimizerConfig:
     clip_grad: float = 1.0
     """Gradient clipping based on global L2 norm."""
 
+    move_clip_grad_to_reducer: bool = False
+    """If true with top-k AdamS reducer, skip optimizer-side clipping."""
+
     log_num_zeros_in_grad: bool = False
     """If true, calculate and log the number of zeros in gradient."""
 

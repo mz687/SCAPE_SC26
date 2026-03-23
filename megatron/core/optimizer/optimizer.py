@@ -55,6 +55,11 @@ from .optimizer_config import OptimizerConfig
 logger = getLogger(__name__)
 
 
+def _noop_init_state_fn(*args, **kwargs):
+    """No-op init-state callback for optimizers that do not require state pre-init."""
+    return None
+
+
 def _zero_grad_group_helper(
     group: List[torch.nn.Parameter], set_to_none: bool, use_decoupled_grad: bool = False
 ):
@@ -111,7 +116,7 @@ class MegatronOptimizer(ABC):
         self,
         optimizer: torch.optim.Optimizer,
         config: OptimizerConfig,
-        init_state_fn: Callable = lambda x: None,
+        init_state_fn: Optional[Callable] = _noop_init_state_fn,
     ):
         """Input optimizer is the base optimizer (e.g., Adam)."""
         self.optimizer = optimizer
@@ -121,7 +126,7 @@ class MegatronOptimizer(ABC):
                 "This may be expected if you have frozen sub-models."
             )
         self.config = config
-        self.init_state_fn = init_state_fn
+        self.init_state_fn = init_state_fn if init_state_fn is not None else _noop_init_state_fn
 
     def get_parameters(self) -> List[torch.nn.Parameter]:
         """
@@ -604,7 +609,8 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
                 barrier=self.config.barrier_with_L1_time
             )
         grad_norm = 0.0
-        if self.config.clip_grad > 0.0:
+        move_clip_grad_to_reducer = bool(getattr(self.config, 'move_clip_grad_to_reducer', False))
+        if self.config.clip_grad > 0.0 and not move_clip_grad_to_reducer:
             grad_norm = self.clip_grad_norm(self.config.clip_grad)
         if timers is not None:
             timers('optimizer-clip-main-grad').stop()
@@ -974,7 +980,8 @@ class FP32Optimizer(MegatronOptimizer):
                 barrier=self.config.barrier_with_L1_time
             )
         grad_norm = None
-        if self.config.clip_grad > 0.0:
+        move_clip_grad_to_reducer = bool(getattr(self.config, 'move_clip_grad_to_reducer', False))
+        if self.config.clip_grad > 0.0 and not move_clip_grad_to_reducer:
             grad_norm = self.clip_grad_norm(self.config.clip_grad)
         if timers is not None:
             timers('optimizer-clip-main-grad').stop()
@@ -1321,23 +1328,29 @@ class ChainedOptimizer(MegatronOptimizer):
             return False, None, None
 
         grad_norm = self.get_grad_norm()
+        move_clip_grad_to_reducer = any(
+            bool(getattr(optimizer.config, 'move_clip_grad_to_reducer', False))
+            for optimizer in self.chained_optimizers
+            if not (hasattr(optimizer, 'is_stub_optimizer') and optimizer.is_stub_optimizer)
+        )
 
         # Clip gradients.
-        for optimizer in self.chained_optimizers:
-            if hasattr(optimizer, 'is_stub_optimizer') and optimizer.is_stub_optimizer:
-                continue
-            parameters = optimizer.get_parameters()
-            if len(parameters) == 0:
-                continue
-            if optimizer.config.clip_grad > 0.0:
-                clip_grad_by_total_norm_fp32(
-                    parameters,
-                    max_norm=optimizer.config.clip_grad,
-                    total_norm=grad_norm,
-                    use_decoupled_grad=(
-                        optimizer.config.use_precision_aware_optimizer_no_fp8_or_ds_fp8
-                    ),
-                )
+        if not move_clip_grad_to_reducer:
+            for optimizer in self.chained_optimizers:
+                if hasattr(optimizer, 'is_stub_optimizer') and optimizer.is_stub_optimizer:
+                    continue
+                parameters = optimizer.get_parameters()
+                if len(parameters) == 0:
+                    continue
+                if optimizer.config.clip_grad > 0.0:
+                    clip_grad_by_total_norm_fp32(
+                        parameters,
+                        max_norm=optimizer.config.clip_grad,
+                        total_norm=grad_norm,
+                        use_decoupled_grad=(
+                            optimizer.config.use_precision_aware_optimizer_no_fp8_or_ds_fp8
+                        ),
+                    )
 
         # Count the zeros in the grads.
         num_zeros_in_grad = self.count_zeros() if self.config.log_num_zeros_in_grad else None

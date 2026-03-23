@@ -1538,10 +1538,8 @@ def get_megatron_optimizer_config(args: Any) -> OptimizerConfig:
         config.optimizer = 'sgd'
         config.sgd_momentum = 0.0
         config.weight_decay = 0.0
-        # Reducer already writes preconditioned AdamS update metrics into grads.
-        # Global grad clipping at optimizer level would clip those metrics
-        # (not raw gradients) and can collapse effective step size.
-        config.clip_grad = 0.0
+        # Keep clip_grad unchanged. Optimizer.step skips clipping when
+        # move_clip_grad_to_reducer is enabled, and reducer applies clipping once.
 
     return config, config_overrides
 
@@ -1880,7 +1878,9 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
 
     timers('optimizer', log_level=1).start(barrier=args.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
-    if getattr(args, "use_topk_adams_reducer", False):
+    if getattr(args, "use_topk_adams_reducer", False) and getattr(
+        args, "move_clip_grad_to_reducer", False
+    ):
         synced_grad_norm = _get_topk_reducer_synced_grad_norm(model)
         if synced_grad_norm is not None:
             grad_norm = synced_grad_norm

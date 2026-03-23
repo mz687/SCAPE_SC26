@@ -206,6 +206,9 @@ class DistributedDataParallelConfig:
     topk_adams_density_warmup_steps: int = 0
     """Number of steps to linearly warm up density from start to target."""
 
+    move_clip_grad_to_reducer: bool = False
+    """If true, apply global grad clipping inside top-k reducer on raw synced gradients."""
+
     use_fp8_topk_quant: bool = False
     """If true, use FP8 quantized sparse payloads in Top-K AdamS reducer."""
 
@@ -244,6 +247,10 @@ class DistributedDataParallelConfig:
                 raise ValueError(
                     f"topk_adams_start_iter must be >= 0, got {self.topk_adams_start_iter}."
                 )
+        elif self.move_clip_grad_to_reducer:
+            raise ValueError(
+                "move_clip_grad_to_reducer requires use_topk_adams_reducer."
+            )
 
         if self.nccl_ub:
             if 'expandable_segments:True' in os.getenv('PYTORCH_CUDA_ALLOC_CONF', '').split(','):
