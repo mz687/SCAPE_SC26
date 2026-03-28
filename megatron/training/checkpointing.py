@@ -245,6 +245,42 @@ def get_load_checkpoint_path_by_args(args, load_arg="load"):
     return get_checkpoint_name(load_dir, iteration, release, return_base_dir=True)
 
 
+def _checkpoint_has_sharded_key_prefix(checkpoint_dir: Optional[str], prefix: str) -> bool:
+    """Return True if sharded checkpoint metadata contains any key with the prefix."""
+    if checkpoint_dir is None:
+        return False
+
+    load_sharded_metadata_fn = getattr(dist_checkpointing, "load_sharded_metadata", None)
+    if load_sharded_metadata_fn is None:
+        try:
+            from megatron.core.dist_checkpointing.serialization import (
+                load_sharded_metadata as load_sharded_metadata_fn,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Unable to inspect sharded checkpoint metadata at %s for prefix %s: %s. "
+                "Assuming the prefix is present.",
+                checkpoint_dir,
+                prefix,
+                exc,
+            )
+            return True
+
+    try:
+        sharded_metadata = load_sharded_metadata_fn(checkpoint_dir)
+    except Exception as exc:
+        logger.warning(
+            "Unable to inspect sharded checkpoint metadata at %s for prefix %s: %s. "
+            "Assuming the prefix is present.",
+            checkpoint_dir,
+            prefix,
+            exc,
+        )
+        return True
+
+    return any(isinstance(key, str) and key.startswith(prefix) for key in sharded_metadata.keys())
+
+
 def get_distributed_optimizer_checkpoint_name(model_checkpoint_name):
     return os.path.join(os.path.dirname(model_checkpoint_name),
                         "distrib_optim.pt")
@@ -509,6 +545,7 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
     ft_integration.on_checkpointing_start()
 
     # Only rank zero of the data parallel writes to the disk.
+    ddp_model = model
     model = unwrap_model(model)
 
     # Handle non_persistent_ckpt flag. Besides overwriting `args.save` and
@@ -608,6 +645,7 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler, num_floati
             optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),
             rerun_state=rerun_state,
+            grad_reducer_model=ddp_model,
         )
 
         state_dict['num_floating_point_operations_so_far'] = num_floating_point_operations_so_far
@@ -939,6 +977,8 @@ def generate_state_dict(
     optim_sd_kwargs=None,
     model_sd_kwargs=None,
     rerun_state=None,
+    grad_reducer_model=None,
+    include_grad_reducer_state=True,
 ):
     """Generate a state dict from given model, optimizer, scheduler, rng state and others. """
 
@@ -948,6 +988,9 @@ def generate_state_dict(
     state_dict['checkpoint_version'] = 3.0
     if iteration is not None:
         state_dict['iteration'] = iteration
+
+    if grad_reducer_model is None:
+        grad_reducer_model = model
 
     for i in range(len(model)):
         key = "model"
@@ -967,22 +1010,24 @@ def generate_state_dict(
 
         state_dict[key] = model_sd
 
-        grad_reducer_sd_fn = getattr(model[i], 'grad_reducer_state_dict', None)
-        if callable(grad_reducer_sd_fn):
-            grad_reducer_sd = grad_reducer_sd_fn()
-            if grad_reducer_sd is not None:
-                grad_reducer_key = "grad_reducer" if len(model) == 1 else f"grad_reducer{i}"
-                if args.ckpt_format == "torch_dist":
-                    tp_group = mpu.get_tensor_model_parallel_group()
-                    pp_group = mpu.get_pipeline_model_parallel_group()
-                    grad_reducer_sd = ShardedObject(
-                        grad_reducer_key,
-                        grad_reducer_sd,
-                        (get_pg_size(pp_group), get_pg_size(tp_group)),
-                        (get_pg_rank(pp_group), get_pg_rank(tp_group)),
-                        replica_id=mpu.get_data_parallel_rank(with_context_parallel=True),
-                    )
-                state_dict[grad_reducer_key] = grad_reducer_sd
+        if include_grad_reducer_state:
+            reducer_owner = grad_reducer_model[i] if i < len(grad_reducer_model) else None
+            grad_reducer_sd_fn = getattr(reducer_owner, 'grad_reducer_state_dict', None)
+            if callable(grad_reducer_sd_fn):
+                grad_reducer_sd = grad_reducer_sd_fn()
+                if grad_reducer_sd is not None:
+                    grad_reducer_key = "grad_reducer" if len(model) == 1 else f"grad_reducer{i}"
+                    if args.ckpt_format == "torch_dist":
+                        tp_group = mpu.get_tensor_model_parallel_group()
+                        pp_group = mpu.get_pipeline_model_parallel_group()
+                        grad_reducer_sd = ShardedObject(
+                            grad_reducer_key,
+                            grad_reducer_sd,
+                            (get_pg_size(pp_group), get_pg_size(tp_group)),
+                            (get_pg_rank(pp_group), get_pg_rank(tp_group)),
+                            replica_id=mpu.get_data_parallel_rank(with_context_parallel=True),
+                        )
+                    state_dict[grad_reducer_key] = grad_reducer_sd
 
     # Optimizer stuff.
     if not args.no_save_optim:
@@ -1707,6 +1752,19 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
         if dp_cp_group is None:
             dp_cp_group = mpu.get_data_parallel_group(with_context_parallel=True)
 
+        load_grad_reducer_state = state_dict is not None and _checkpoint_has_sharded_key_prefix(
+            checkpoint_name, "grad_reducer"
+        )
+        if (
+            state_dict is not None
+            and not load_grad_reducer_state
+            and getattr(args, "use_topk_adams_reducer", False)
+        ):
+            print_rank_0(
+                "Checkpoint does not contain grad_reducer state; "
+                "resuming with a freshly initialized reducer."
+            )
+
         # dist_checkpointing.load_content_metadata(...) may return None.
         # Ensure we have a dict before updating to avoid NoneType AttributeError.
         if sharded_sd_metadata is None:
@@ -1749,7 +1807,9 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
             load_kwargs['sharded_state_dict'] = generate_state_dict(
                 args, model, gen_sd_optim, gen_sd_opt_param_scheduler, gen_sd_rng_state,
                 optim_sd_kwargs=optim_sd_kwargs, model_sd_kwargs=model_sd_kwargs,
-                rerun_state=gen_sd_rerun_state
+                rerun_state=gen_sd_rerun_state,
+                grad_reducer_model=ddp_model,
+                include_grad_reducer_state=load_grad_reducer_state,
             )
     elif args.ckpt_format == "torch_dcp":
         model_sd = model[0].state_dict()
@@ -1774,6 +1834,16 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
             state_dict_metadata = reader.read_metadata().state_dict_metadata
         except FileNotFoundError:
             state_dict_metadata = {}
+
+        load_grad_reducer_state = any(
+            isinstance(key, str) and key.startswith("grad_reducer")
+            for key in state_dict_metadata.keys()
+        )
+        if not load_grad_reducer_state and getattr(args, "use_topk_adams_reducer", False):
+            print_rank_0(
+                "Checkpoint does not contain grad_reducer state; "
+                "resuming with a freshly initialized reducer."
+            )
 
         gen_sd_rerun_state = {}
         gen_sd_opt_param_scheduler = None
@@ -1801,6 +1871,8 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
             optim_sd_kwargs=optim_sd_kwargs,
             rerun_state=gen_sd_rerun_state,
             iteration=1,
+            grad_reducer_model=ddp_model,
+            include_grad_reducer_state=load_grad_reducer_state,
         )
         state_dict["_model"] = model
         load_kwargs["sharded_state_dict"] = state_dict
@@ -1877,9 +1949,24 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
             grad_reducer_key = "grad_reducer" if len(ddp_model) == 1 else f"grad_reducer{i}"
             if grad_reducer_key not in state_dict:
                 continue
+
+            grad_reducer_state = state_dict[grad_reducer_key]
+            if not isinstance(grad_reducer_state, dict):
+                print_rank_0(
+                    f"Skipping {grad_reducer_key} load: expected dict but got "
+                    f"{type(grad_reducer_state).__name__}"
+                )
+                continue
+
             load_grad_reducer_fn = getattr(ddp_model[i], 'load_grad_reducer_state_dict', None)
             if callable(load_grad_reducer_fn):
-                load_grad_reducer_fn(state_dict[grad_reducer_key])
+                load_grad_reducer_fn(grad_reducer_state)
+                buffer_states = grad_reducer_state.get("buffer_states", None)
+                num_buffers = len(buffer_states) if isinstance(buffer_states, list) else 0
+                print_rank_0(
+                    f"Loaded {grad_reducer_key} state: buffers={num_buffers}, "
+                    f"prepared_iteration={grad_reducer_state.get('prepared_iteration', None)}"
+                )
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
     print_rank_0(f' checkpoint version {checkpoint_version}')

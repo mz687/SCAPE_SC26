@@ -37,35 +37,47 @@ unset AWS_OFI_NCCL_VERSION
 unset EFA_VERSION
 export NCCL_IB_DISABLE=1
 
+# Detailed top-k reducer profiling (disable by setting env vars to 0).
+export MEGATRON_TOPK_REDUCER_PROFILE=${MEGATRON_TOPK_REDUCER_PROFILE:-0}
+export MEGATRON_TOPK_REDUCER_PROFILE_SYNC_CUDA=${MEGATRON_TOPK_REDUCER_PROFILE_SYNC_CUDA:-0}
+export MEGATRON_TOPK_REDUCER_PROFILE_LOG_INTERVAL=${MEGATRON_TOPK_REDUCER_PROFILE_LOG_INTERVAL:-0}
+export MEGATRON_TOPK_REDUCER_PROFILE_TOP_LAYERS=${MEGATRON_TOPK_REDUCER_PROFILE_TOP_LAYERS:-0}
+
 echo "NCCL_NET=${NCCL_NET:-<unset>}"
 echo "NCCL_NET_PLUGIN=${NCCL_NET_PLUGIN:-<unset>}"
+echo "TOPK_REDUCER_PROFILE=${MEGATRON_TOPK_REDUCER_PROFILE} sync_cuda=${MEGATRON_TOPK_REDUCER_PROFILE_SYNC_CUDA} log_interval=${MEGATRON_TOPK_REDUCER_PROFILE_LOG_INTERVAL} top_layers=${MEGATRON_TOPK_REDUCER_PROFILE_TOP_LAYERS}"
 
 # Change for multinode config
 TENSOR_PARALLEL=1
 PIPELINE_PARALLEL=1
 DATA_PARALLEL=$(($WORLD_SIZE/$PIPELINE_PARALLEL/$TENSOR_PARALLEL))
 
+export HF_HOME=/tmp/$USER/hf_home_${SLURM_JOB_ID}_${SLURMD_NODENAME}
+export HF_HUB_CACHE=$HF_HOME/hub
+export TRANSFORMERS_CACHE=$HF_HOME/transformers
+mkdir -p "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE"
+
+# define hp for topk reducer
+density=0.1
+start_step=0 # try using dense for first 200 steps
+start_density=1
+density_warmup_steps=10000 # then warmup for 00 steps
+reducer=TopKPerLayerSyncMomentumAdamSFP8ReducerV2
+
+lr_warmup_steps=5000
+global_batch_size=512
+echo "global_batch_size=${global_batch_size}"
 
 # DATA_PATH=<Specify path and file prefix>_text_document
 # NOTE: This should point to data preprocessed with the Llama2 tokenizer.
-DATA_PATH=/scratch/09308/zhengmk/slimpajama6b/slimpajama6b_llama2_text_document
-TOKENIZER_MODEL=meta-llama/Llama-2-7b-hf
-CHECKPOINT_PATH=$SCRATCH/megatron-lm_checkpoints/llama2_danube3_500M_baseline_model_bf16_gradient_fp32_AdamS
-STRICT_RESUME="${STRICT_RESUME:-1}"
+# DATA_PATH=/scratch/09308/zhengmk/slimpajama6b/slimpajama6b_llama2_text_document
+# TOKENIZER_MODEL=meta-llama/Llama-2-7b-hf
+# CHECKPOINT_PATH=$SCRATCH/megatron-lm_checkpoints/llama2_danube3_500M_model_bf16_gradient_fp32_AdamS_topk_sparsify_d_${density}_comp_start_step_${start_step}_density_warmup_${density_warmup_steps}_lr_warmup_${lr_warmup_steps}
+DATA_PATH=/scratch/09308/zhengmk/openwebtxt/preprocessed_data_text_document
+CHECKPOINT_PATH=~/scratch/optimus-cc_checkpoints/GPT2/GPT2_355M_AdamS_${reducer}_d_${density}_from_step_0
 
-lr_warmup_steps=2000
 
-global_batch_size=1024
-echo "global_batch_size=${global_batch_size}"
-
-RESUME_ARGS=(--load "$CHECKPOINT_PATH")
-if [[ "${STRICT_RESUME}" == "1" ]]; then
-  RESUME_ARGS+=(--exit-on-missing-checkpoint)
-fi
-
-echo "STRICT_RESUME=${STRICT_RESUME}"
-
-export WANDB_API_KEY=$(cat ~/wandb_key)
+# export WANDB_API_KEY=$(cat ~/wandb_key)
 
 WANDB_ARGS=()
 if [[ -n "${WANDB_API_KEY:-}" ]]; then
@@ -127,57 +139,52 @@ NODE_RANK=${SLURM_PROCID:-${SLURM_NODEID:-0}}
 echo "SLURM_PROCID=${SLURM_PROCID:-unset} SLURM_NODEID=${SLURM_NODEID:-unset} node_rank=${NODE_RANK}"
 
 timestamp=$(date +%s)
+log_prefix="GPT_345M_AdamS_d_${density}_comp_start_step_${start_step}_d_warmup_steps_${density_warmup_steps}_lr_warmup_steps_${lr_warmup_steps}_${timestamp}"
+
+
 $CONTAINER_CMD env CC="$CC" CXX="$CXX" CUDAHOSTCXX="$CUDAHOSTCXX" \
   torchrun $TORCHRUN_ARGS /home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py \
     --tensor-model-parallel-size $TENSOR_PARALLEL \
     --pipeline-model-parallel-size $PIPELINE_PARALLEL \
-    --num-layers 16 \
-    --hidden-size 1536 \
-    --ffn-hidden-size 4096 \
+    --num-layers 24 \
+    --hidden-size 1024 \
     --num-attention-heads 16 \
-    --group-query-attention \
-    --num-query-groups 8 \
-    --kv-channels 96 \
-    --position-embedding-type rope \
-    --rotary-base 100000 \
-    --rotary-percent 1.0 \
-    --normalization RMSNorm \
-    --norm-epsilon 1e-5 \
-    --swiglu \
-    --untie-embeddings-and-output-weights \
-    --disable-bias-linear \
-    --attention-dropout 0.0 \
-    --hidden-dropout 0.0 \
-    --micro-batch-size 16 \
+    --micro-batch-size 8 \
     --global-batch-size $global_batch_size \
-    --seq-length 4096 \
-    --max-position-embeddings 4096 \
+    --seq-length 1024 \
+    --max-position-embeddings 1024 \
     --train-iters 100000 \
-    --lr-warmup-iters $lr_warmup_steps \
+    --lr-warmup-iters 5000 \
     --save $CHECKPOINT_PATH \
-    "${RESUME_ARGS[@]}" \
+    --load $CHECKPOINT_PATH \
+    --use-checkpoint-lr-scheduler \
     --data-path $DATA_PATH \
-    --tokenizer-type HuggingFaceTokenizer \
-    --tokenizer-model $TOKENIZER_MODEL \
-    --vocab-size 32000 \
+    --vocab-file /work/09308/zhengmk/optimus-cc/range_topk/tools/gpt2-vocab.json \
+    --merge-file /work/09308/zhengmk/optimus-cc/range_topk/tools/gpt2-merges.txt \
+    --data-impl mmap \
     --split 949,50,1 \
     --distributed-backend nccl \
     --optimizer adams \
-    --lr 3e-4 \
+    --lr 1.5e-4 \
     --lr-decay-style cosine \
-    --min-lr 3e-5 \
-    --adam-beta1 0.9 \
-    --adam-beta2 0.95 \
-    --weight-decay 0.1 \
+    --min-lr 1.0e-5 \
+    --weight-decay 1e-2 \
     --clip-grad 1.0 \
-    --tensorboard-dir "${CHECKPOINT_PATH}/tensorboard" \
+    --activations-checkpoint-method uniform \
     --log-interval 1 \
-    --save-interval 1000 \
+    --save-interval 5000 \
     --eval-interval 100 \
     --eval-iters 10 \
-    --use-flash-attn \
-    --bf16 \
     --accumulate-allreduce-grads-in-fp32 \
+    --bf16 \
+    --use-flash-attn \
+    --accumulate-allreduce-grads-in-fp32 \
+    --use-topk-adams-reducer \
+    --topk-adams-density $density \
+    --topk-adams-start-iter $start_step \
+    --topk-adams-density-start $start_density \
+    --topk-adams-density-warmup-steps $density_warmup_steps \
+    --no-topk-adams-use-exclude-from-topk \
     "${WANDB_ARGS[@]}" \
-    > >(tee -a llama2_500M_AdamS_${timestamp}.out) \
-    2> >(tee -a llama2_500M_AdamS_${timestamp}.err >&2)
+     > >(tee -a "${log_prefix}.out") \
+     2> >(tee -a "${log_prefix}.err" >&2)

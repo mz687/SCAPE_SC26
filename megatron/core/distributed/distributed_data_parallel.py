@@ -19,6 +19,7 @@ from .fp8_topk_adams_reducer import (
     TopKPerLayerSyncMomentumAdamSReducerV2,
 )
 from .param_and_grad_buffer import _ParamAndGradBuffer, partition_buckets
+from .topk_mask_overlap_tracker import TopKMaskOverlapTracker
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,7 @@ class DistributedDataParallel(_BaseDataParallel):
         )
 
         self.topk_adams_reducer = None
+        self.topk_mask_overlap_tracker = None
         if self.ddp_config.use_topk_adams_reducer:
             reducer_cls = (
                 TopKPerLayerSyncMomentumAdamSFP8ReducerV2
@@ -320,6 +322,13 @@ class DistributedDataParallel(_BaseDataParallel):
                 ddp_config=self.ddp_config,
             )
             self._topk_reducer_train_iter = 0
+        elif self.ddp_config.use_topk_mask_overlap_tracker:
+            self.topk_mask_overlap_tracker = TopKMaskOverlapTracker(
+                buffers=self.buffers + self.expert_parallel_buffers,
+                param_to_name=param_to_name,
+                ddp_config=self.ddp_config,
+            )
+            self._topk_mask_overlap_train_iter = 0
 
         # Delete references to weight_tensor if they exist since we don't want two parameter copies
         # if we re-mapped parameters (which happens when we use the distributed optimizer).
@@ -571,19 +580,27 @@ class DistributedDataParallel(_BaseDataParallel):
             return
         for bucket_group in self.bucket_groups + self.expert_parallel_bucket_groups:
             bucket_group.finish_grad_sync(force_all_reduce=force_all_reduce)
+        if self.topk_mask_overlap_tracker is not None:
+            train_iter = getattr(self, "_topk_mask_overlap_train_iter", 0)
+            self.topk_mask_overlap_tracker.maybe_record(train_iter=train_iter)
 
     def set_topk_reducer_optimizer(self, optimizer):
-        """Attach optimizer to top-k reducer when enabled."""
-        if self.topk_adams_reducer is None:
+        """Attach optimizer to reducer- or tracker-side AdamS state when enabled."""
+        if self.topk_adams_reducer is None and self.topk_mask_overlap_tracker is None:
             return
-        self.topk_adams_reducer.set_optimizer(optimizer)
+        if self.topk_adams_reducer is not None:
+            self.topk_adams_reducer.set_optimizer(optimizer)
+        if self.topk_mask_overlap_tracker is not None:
+            self.topk_mask_overlap_tracker.set_optimizer(optimizer)
 
     def prepare_reducer_pre_forward(self, train_iter: int):
         """Prepare reducer state before forward/backward for this iteration."""
-        if self.topk_adams_reducer is None:
-            return
-        self._topk_reducer_train_iter = int(train_iter)
-        self.topk_adams_reducer.prepare_pre_forward(int(train_iter))
+        if self.topk_adams_reducer is not None:
+            self._topk_reducer_train_iter = int(train_iter)
+            self.topk_adams_reducer.prepare_pre_forward(int(train_iter))
+        if self.topk_mask_overlap_tracker is not None:
+            self._topk_mask_overlap_train_iter = int(train_iter)
+            self.topk_mask_overlap_tracker.prepare_pre_forward(int(train_iter))
 
     def grad_reducer_state_dict(self):
         """Return state dict for top-k reducer, if enabled."""

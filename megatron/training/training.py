@@ -1545,18 +1545,22 @@ def get_megatron_optimizer_config(args: Any) -> OptimizerConfig:
 
 
 def _configure_topk_adams_reducer_runtime(model, optimizer, args):
-    """Attach optimizer and weight-decay metadata required by top-k AdamS reducer."""
-    if not getattr(args, "use_topk_adams_reducer", False):
+    """Attach optimizer metadata required by the Top-K AdamS reducer and overlap tracker."""
+    if not (
+        getattr(args, "use_topk_adams_reducer", False)
+        or getattr(args, "use_topk_mask_overlap_tracker", False)
+    ):
         return
     if optimizer is None:
         return
 
-    for param_group in optimizer.param_groups:
-        wd_mult = float(param_group.get('wd_mult', 1.0))
-        param_group['weight_decay_reducer'] = float(args.weight_decay) * wd_mult
-        param_group['betas'] = (float(args.adam_beta1), float(args.adam_beta2))
-        param_group['eps'] = float(args.adam_eps)
-        param_group['bias_correction'] = True
+    if getattr(args, "use_topk_adams_reducer", False):
+        for param_group in optimizer.param_groups:
+            wd_mult = float(param_group.get('wd_mult', 1.0))
+            param_group['weight_decay_reducer'] = float(args.weight_decay) * wd_mult
+            param_group['betas'] = (float(args.adam_beta1), float(args.adam_beta2))
+            param_group['eps'] = float(args.adam_eps)
+            param_group['bias_correction'] = True
 
     for model_chunk in model:
         set_optimizer_fn = getattr(model_chunk, 'set_topk_reducer_optimizer', None)

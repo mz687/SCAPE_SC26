@@ -6,6 +6,7 @@ from .serialization import (
     load,
     load_common_state_dict,
     load_content_metadata,
+    load_sharded_metadata,
     load_plain_tensors,
     load_tensors_metadata,
     remove_sharded_tensors,

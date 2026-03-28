@@ -1,0 +1,545 @@
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+INFO:    fakeroot command not found, using only root-mapped namespace
+INFO:    gocryptfs not found, will not be able to use gocryptfs
+Could not set the permissions on the file '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'. Error: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'.
+Continuing without setting permissions.
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/shutil.py", line 886, in move
+    os.rename(src, real_dst)
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete' -> '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1606, in _copy_no_matter_what
+    shutil.copy2(src, dst)
+  File "/usr/lib/python3.12/shutil.py", line 475, in copy2
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+  File "/usr/lib/python3.12/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 70, in __init__
+    self.tokenizer = AutoTokenizer.from_pretrained(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 871, in from_pretrained
+    tokenizer_config = get_tokenizer_config(pretrained_model_name_or_path, **kwargs)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 703, in get_tokenizer_config
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/utils/hub.py", line 403, in cached_file
+    resolved_file = hf_hub_download(
+                    ^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 860, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1009, in _hf_hub_download_to_cache_dir
+    _download_to_tmp_and_move(
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1553, in _download_to_tmp_and_move
+    _chmod_and_move(incomplete_path, destination_path)
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1595, in _chmod_and_move
+    shutil.move(str(src), str(dst), copy_function=_copy_no_matter_what)
+  File "/usr/lib/python3.12/shutil.py", line 906, in move
+    copy_function(src, real_dst)
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1609, in _copy_no_matter_what
+    shutil.copyfile(src, dst)
+  File "/usr/lib/python3.12/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py", line 412, in <module>
+    pretrain(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/training.py", line 840, in pretrain
+    initialize_megatron(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/initialize.py", line 189, in initialize_megatron
+    set_global_variables(args)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 102, in set_global_variables
+    _ = _build_tokenizer(args)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 160, in _build_tokenizer
+    _GLOBAL_TOKENIZER = build_tokenizer(args)
+                        ^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/utils/build_tokenizer.py", line 88, in build_tokenizer
+    tokenizer = MegatronTokenizer.from_pretrained(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/megatron_tokenizer.py", line 100, in from_pretrained
+    tokenizer = tokenizer_cls(path=tokenizer_path, config=metadata, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/models/default_tokenizer.py", line 12, in __init__
+    super().__init__(path, config, **kwargs)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 38, in __init__
+    self._tokenizer = self._restore_model(**kwargs)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 63, in _restore_model
+    return library_class(self.path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 91, in __init__
+    raise ValueError(
+ValueError: Unable to instantiate HuggingFace AutoTokenizer for meta-llama/Llama-2-7b-hf. Exception: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/utils/logging.py:115: UserWarning: Failed to import transformers plugin due to: RuntimeError("Failed to import transformers.trainer because of the following error (look up to see its traceback):\ncannot import name 'amp' from 'apex' (/usr/local/lib/python3.12/dist-packages/apex/__init__.py)"). You may ignore this warning if you do not need this plugin.
+  warnings.warn(message, *args, **kwargs)
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/utils/logging.py:115: UserWarning: Failed to import huggingface plugin due to: ImportError("cannot import name 'ModelOptHFTrainer' from 'modelopt.torch.opt.plugins' (/usr/local/lib/python3.12/dist-packages/modelopt/torch/opt/plugins/__init__.py)"). You may ignore this warning if you do not need this plugin.
+  warnings.warn(message, *args, **kwargs)
+Traceback (most recent call last):
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 70, in __init__
+    self.tokenizer = AutoTokenizer.from_pretrained(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 934, in from_pretrained
+    return tokenizer_class.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 2036, in from_pretrained
+    return cls._from_pretrained(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 2257, in _from_pretrained
+    tokenizer_file_handle = json.load(tokenizer_file_handle)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+                 ^^^^^^^^^
+OSError: [Errno 116] Stale file handle
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py", line 412, in <module>
+    pretrain(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/training.py", line 840, in pretrain
+    initialize_megatron(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/initialize.py", line 189, in initialize_megatron
+    set_global_variables(args)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 102, in set_global_variables
+    _ = _build_tokenizer(args)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 160, in _build_tokenizer
+    _GLOBAL_TOKENIZER = build_tokenizer(args)
+                        ^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/utils/build_tokenizer.py", line 88, in build_tokenizer
+    tokenizer = MegatronTokenizer.from_pretrained(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/megatron_tokenizer.py", line 100, in from_pretrained
+    tokenizer = tokenizer_cls(path=tokenizer_path, config=metadata, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/models/default_tokenizer.py", line 12, in __init__
+    super().__init__(path, config, **kwargs)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 38, in __init__
+    self._tokenizer = self._restore_model(**kwargs)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 63, in _restore_model
+    return library_class(self.path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 91, in __init__
+    raise ValueError(
+ValueError: Unable to instantiate HuggingFace AutoTokenizer for meta-llama/Llama-2-7b-hf. Exception: [Errno 116] Stale file handle
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/utils/logging.py:115: UserWarning: Failed to import transformers trainer plugin due to: ImportError("cannot import name 'ModelOptHFTrainer' from 'modelopt.torch.opt.plugins' (/usr/local/lib/python3.12/dist-packages/modelopt/torch/opt/plugins/__init__.py)"). You may ignore this warning if you do not need this plugin.
+  warnings.warn(message, *args, **kwargs)
+Exception ignored in: <function BaseFileLock.__del__ at 0x40037a72fba0>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/filelock/_api.py", line 571, in __del__
+    self.release(force=True)
+  File "/usr/local/lib/python3.12/dist-packages/filelock/_api.py", line 538, in release
+    self._release()
+  File "/usr/local/lib/python3.12/dist-packages/filelock/_unix.py", line 95, in _release
+    fcntl.flock(fd, fcntl.LOCK_UN)
+OSError: [Errno 37] No locks available
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/shutil.py", line 886, in move
+    os.rename(src, real_dst)
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/451134b2ddc2e78555d1e857518c54b4bdc2e87d.incomplete' -> '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/451134b2ddc2e78555d1e857518c54b4bdc2e87d'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1606, in _copy_no_matter_what
+    shutil.copy2(src, dst)
+  File "/usr/lib/python3.12/shutil.py", line 475, in copy2
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+  File "/usr/lib/python3.12/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/451134b2ddc2e78555d1e857518c54b4bdc2e87d.incomplete'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+/usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 4.48.1 is not tested with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+  _warnings.warn(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 70, in __init__
+    self.tokenizer = AutoTokenizer.from_pretrained(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 934, in from_pretrained
+    return tokenizer_class.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 1992, in from_pretrained
+    resolved_vocab_files[file_id] = cached_file(
+                                    ^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/utils/hub.py", line 403, in cached_file
+    resolved_file = hf_hub_download(
+                    ^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 860, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1009, in _hf_hub_download_to_cache_dir
+    _download_to_tmp_and_move(
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1553, in _download_to_tmp_and_move
+    _chmod_and_move(incomplete_path, destination_path)
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1595, in _chmod_and_move
+    shutil.move(str(src), str(dst), copy_function=_copy_no_matter_what)
+  File "/usr/lib/python3.12/shutil.py", line 906, in move
+    copy_function(src, real_dst)
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1609, in _copy_no_matter_what
+    shutil.copyfile(src, dst)
+  File "/usr/lib/python3.12/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/451134b2ddc2e78555d1e857518c54b4bdc2e87d.incomplete'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py", line 412, in <module>
+    pretrain(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/training.py", line 840, in pretrain
+    initialize_megatron(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/initialize.py", line 189, in initialize_megatron
+    set_global_variables(args)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 102, in set_global_variables
+    _ = _build_tokenizer(args)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 160, in _build_tokenizer
+    _GLOBAL_TOKENIZER = build_tokenizer(args)
+                        ^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/utils/build_tokenizer.py", line 88, in build_tokenizer
+    tokenizer = MegatronTokenizer.from_pretrained(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/megatron_tokenizer.py", line 100, in from_pretrained
+    tokenizer = tokenizer_cls(path=tokenizer_path, config=metadata, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/models/default_tokenizer.py", line 12, in __init__
+    super().__init__(path, config, **kwargs)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 38, in __init__
+    self._tokenizer = self._restore_model(**kwargs)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 63, in _restore_model
+    return library_class(self.path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 91, in __init__
+    raise ValueError(
+ValueError: Unable to instantiate HuggingFace AutoTokenizer for meta-llama/Llama-2-7b-hf. Exception: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/451134b2ddc2e78555d1e857518c54b4bdc2e87d.incomplete'
+/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/utils.py:411: UserWarning: Overriding default arguments for tokenizer_type:GPT2BPETokenizer with tokenizer_type:HuggingFaceTokenizer
+  warnings.warn(message)
+/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/utils.py:411: UserWarning: --tokenizer-hf-use-fast argument is deprecated and will be removed soon. `use_fast` is set to True by default for HF tokenizers.Use --tokenizer-hf-no-use-fast if you want to disable `use_fast`.
+  warnings.warn(message)
+/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/utils.py:411: UserWarning: --tokenizer-hf-include-special-tokens argument is deprecated and will be removed soon. `include_special_tokens` is set to True by default for HF tokenizers.Use --tokenizer-hf-no-include-special-tokens if you want to disable `include_special_tokens`.
+  warnings.warn(message)
+Could not set the permissions on the file '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'. Error: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'.
+Continuing without setting permissions.
+Exception ignored in: <function BaseFileLock.__del__ at 0x4003943ffba0>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/filelock/_api.py", line 571, in __del__
+    self.release(force=True)
+  File "/usr/local/lib/python3.12/dist-packages/filelock/_api.py", line 538, in release
+    self._release()
+  File "/usr/local/lib/python3.12/dist-packages/filelock/_unix.py", line 95, in _release
+    fcntl.flock(fd, fcntl.LOCK_UN)
+OSError: [Errno 37] No locks available
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/shutil.py", line 886, in move
+    os.rename(src, real_dst)
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete' -> '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1606, in _copy_no_matter_what
+    shutil.copy2(src, dst)
+  File "/usr/lib/python3.12/shutil.py", line 475, in copy2
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+  File "/usr/lib/python3.12/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 70, in __init__
+    self.tokenizer = AutoTokenizer.from_pretrained(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 871, in from_pretrained
+    tokenizer_config = get_tokenizer_config(pretrained_model_name_or_path, **kwargs)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 703, in get_tokenizer_config
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/transformers/utils/hub.py", line 403, in cached_file
+    resolved_file = hf_hub_download(
+                    ^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 860, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1009, in _hf_hub_download_to_cache_dir
+    _download_to_tmp_and_move(
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1553, in _download_to_tmp_and_move
+    _chmod_and_move(incomplete_path, destination_path)
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1595, in _chmod_and_move
+    shutil.move(str(src), str(dst), copy_function=_copy_no_matter_what)
+  File "/usr/lib/python3.12/shutil.py", line 906, in move
+    copy_function(src, real_dst)
+  File "/root/.local/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1609, in _copy_no_matter_what
+    shutil.copyfile(src, dst)
+  File "/usr/lib/python3.12/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py", line 412, in <module>
+    pretrain(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/training.py", line 840, in pretrain
+    initialize_megatron(
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/initialize.py", line 189, in initialize_megatron
+    set_global_variables(args)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 102, in set_global_variables
+    _ = _build_tokenizer(args)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/training/global_vars.py", line 160, in _build_tokenizer
+    _GLOBAL_TOKENIZER = build_tokenizer(args)
+                        ^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/utils/build_tokenizer.py", line 88, in build_tokenizer
+    tokenizer = MegatronTokenizer.from_pretrained(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/megatron_tokenizer.py", line 100, in from_pretrained
+    tokenizer = tokenizer_cls(path=tokenizer_path, config=metadata, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/models/default_tokenizer.py", line 12, in __init__
+    super().__init__(path, config, **kwargs)
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 38, in __init__
+    self._tokenizer = self._restore_model(**kwargs)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/text_tokenizer.py", line 63, in _restore_model
+    return library_class(self.path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/09308/zhengmk/optimus-cc/Megatron-LM/megatron/core/tokenizers/text/libraries/huggingface_tokenizer.py", line 91, in __init__
+    raise ValueError(
+ValueError: Unable to instantiate HuggingFace AutoTokenizer for meta-llama/Llama-2-7b-hf. Exception: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'
+E0326 08:04:55.503000 3573618 torch/distributed/elastic/multiprocessing/api.py:984] failed (exitcode: 1) local_rank: 0 (pid: 3573695) of binary: /usr/bin/python3
+E0326 08:04:55.506000 576544 torch/distributed/elastic/multiprocessing/api.py:984] failed (exitcode: 1) local_rank: 0 (pid: 576627) of binary: /usr/bin/python3
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-26_08:04:55
+  host      : c637-122.vista.tacc.utexas.edu
+  rank      : 20 (local_rank: 0)
+  exitcode  : 1 (pid: 3573695)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-26_08:04:55
+  host      : c613-021.vista.tacc.utexas.edu
+  rank      : 1 (local_rank: 0)
+  exitcode  : 1 (pid: 576627)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+E0326 08:04:55.522000 400532 torch/distributed/elastic/multiprocessing/api.py:984] failed (exitcode: 1) local_rank: 0 (pid: 400606) of binary: /usr/bin/python3
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-26_08:04:55
+  host      : c641-132.vista.tacc.utexas.edu
+  rank      : 30 (local_rank: 0)
+  exitcode  : 1 (pid: 400606)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+E0326 08:04:55.530000 1680852 torch/distributed/elastic/multiprocessing/api.py:984] failed (exitcode: 1) local_rank: 0 (pid: 1680936) of binary: /usr/bin/python3
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-26_08:04:55
+  host      : c622-002.vista.tacc.utexas.edu
+  rank      : 9 (local_rank: 0)
+  exitcode  : 1 (pid: 1680936)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

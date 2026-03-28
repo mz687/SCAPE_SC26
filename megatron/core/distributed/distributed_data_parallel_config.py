@@ -204,13 +204,40 @@ class DistributedDataParallelConfig:
     """Initial top-k density used before warmup reaches target density."""
 
     topk_adams_density_warmup_steps: int = 0
-    """Number of steps to linearly warm up density from start to target."""
+    """Number of steps to geometrically warm up density from start to target."""
+
+    topk_adams_density_cooldown_steps: int = 0
+    """Optional cooldown steps to geometrically increase density from target to 1.0."""
+
+    topk_adams_density_cooldown_start_step: int = -1
+    """Step to start cooldown; negative means use topk_adams_start_iter."""
+
+    topk_adams_use_exclude_from_topk: bool = True
+    """If true, apply name-based exclusion (e.g., LayerNorm/RMSNorm) from top-k sparsification."""
 
     move_clip_grad_to_reducer: bool = False
     """If true, apply global grad clipping inside top-k reducer on raw synced gradients."""
 
     use_fp8_topk_quant: bool = False
     """If true, use FP8 quantized sparse payloads in Top-K AdamS reducer."""
+
+    use_topk_mask_overlap_tracker: bool = False
+    """If true, record per-parameter top-k mask overlap on AdamS momentum."""
+
+    topk_mask_overlap_density: float = 0.01
+    """Top-k density (<1.0) or absolute k (>=1) used by the overlap tracker."""
+
+    topk_mask_overlap_start_iter: int = 0
+    """Iteration to start recording top-k mask overlap metrics."""
+
+    topk_mask_overlap_reference_mode: str = "first"
+    """Reference mask mode for the overlap tracker: 'first' or 'prev'."""
+
+    topk_mask_overlap_output_dir: str = "/tmp/topk_mask_overlap"
+    """Directory where the overlap tracker writes CSV outputs."""
+
+    topk_mask_overlap_max_steps: int = 0
+    """Maximum number of post-start steps to record; 0 means unlimited."""
 
     def __post_init__(self):
         import os
@@ -243,6 +270,16 @@ class DistributedDataParallelConfig:
                     "topk_adams_density_warmup_steps must be >= 0, "
                     f"got {self.topk_adams_density_warmup_steps}."
                 )
+            if self.topk_adams_density_cooldown_steps < 0:
+                raise ValueError(
+                    "topk_adams_density_cooldown_steps must be >= 0, "
+                    f"got {self.topk_adams_density_cooldown_steps}."
+                )
+            if self.topk_adams_density_cooldown_start_step < -1:
+                raise ValueError(
+                    "topk_adams_density_cooldown_start_step must be >= -1, "
+                    f"got {self.topk_adams_density_cooldown_start_step}."
+                )
             if self.topk_adams_start_iter < 0:
                 raise ValueError(
                     f"topk_adams_start_iter must be >= 0, got {self.topk_adams_start_iter}."
@@ -251,6 +288,41 @@ class DistributedDataParallelConfig:
             raise ValueError(
                 "move_clip_grad_to_reducer requires use_topk_adams_reducer."
             )
+
+        if self.use_topk_mask_overlap_tracker:
+            if self.use_topk_adams_reducer:
+                raise ValueError(
+                    "Top-k mask overlap tracker does not support use_topk_adams_reducer."
+                )
+            if self.use_distributed_optimizer:
+                raise ValueError(
+                    "Top-k mask overlap tracker does not support distributed optimizer."
+                )
+            if self.use_megatron_fsdp or self.use_custom_fsdp:
+                raise ValueError(
+                    "Top-k mask overlap tracker is supported only on the standard MCore DDP path."
+                )
+            if self.topk_mask_overlap_density <= 0.0:
+                raise ValueError(
+                    "topk_mask_overlap_density must be > 0, "
+                    f"got {self.topk_mask_overlap_density}."
+                )
+            if self.topk_mask_overlap_start_iter < 0:
+                raise ValueError(
+                    "topk_mask_overlap_start_iter must be >= 0, "
+                    f"got {self.topk_mask_overlap_start_iter}."
+                )
+            if self.topk_mask_overlap_max_steps < 0:
+                raise ValueError(
+                    "topk_mask_overlap_max_steps must be >= 0, "
+                    f"got {self.topk_mask_overlap_max_steps}."
+                )
+            reference_mode = str(self.topk_mask_overlap_reference_mode).strip().lower()
+            if reference_mode not in ("first", "prev"):
+                raise ValueError(
+                    "topk_mask_overlap_reference_mode must be either 'first' or 'prev', "
+                    f"got {self.topk_mask_overlap_reference_mode!r}."
+                )
 
         if self.nccl_ub:
             if 'expandable_segments:True' in os.getenv('PYTORCH_CUDA_ALLOC_CONF', '').split(','):

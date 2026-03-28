@@ -37,8 +37,15 @@ unset AWS_OFI_NCCL_VERSION
 unset EFA_VERSION
 export NCCL_IB_DISABLE=1
 
+# Detailed top-k reducer profiling (disable by setting env vars to 0).
+export MEGATRON_TOPK_REDUCER_PROFILE=${MEGATRON_TOPK_REDUCER_PROFILE:-0}
+export MEGATRON_TOPK_REDUCER_PROFILE_SYNC_CUDA=${MEGATRON_TOPK_REDUCER_PROFILE_SYNC_CUDA:-0}
+export MEGATRON_TOPK_REDUCER_PROFILE_LOG_INTERVAL=${MEGATRON_TOPK_REDUCER_PROFILE_LOG_INTERVAL:-0}
+export MEGATRON_TOPK_REDUCER_PROFILE_TOP_LAYERS=${MEGATRON_TOPK_REDUCER_PROFILE_TOP_LAYERS:-0}
+
 echo "NCCL_NET=${NCCL_NET:-<unset>}"
 echo "NCCL_NET_PLUGIN=${NCCL_NET_PLUGIN:-<unset>}"
+echo "TOPK_REDUCER_PROFILE=${MEGATRON_TOPK_REDUCER_PROFILE} sync_cuda=${MEGATRON_TOPK_REDUCER_PROFILE_SYNC_CUDA} log_interval=${MEGATRON_TOPK_REDUCER_PROFILE_LOG_INTERVAL} top_layers=${MEGATRON_TOPK_REDUCER_PROFILE_TOP_LAYERS}"
 
 # Change for multinode config
 TENSOR_PARALLEL=1
@@ -46,10 +53,10 @@ PIPELINE_PARALLEL=1
 DATA_PARALLEL=$(($WORLD_SIZE/$PIPELINE_PARALLEL/$TENSOR_PARALLEL))
 
 # define hp for topk reducer
-density=0.1
-start_step=2000 # try using dense for first 200 steps
+density=0.01
+start_step=0 # try using dense for first 200 steps
 start_density=1
-density_warmup_steps=8000 # then warmup for 00 steps
+density_warmup_steps=10000 # then warmup for 00 steps
 
 lr_warmup_steps=2000
 
@@ -71,6 +78,36 @@ if [[ -n "${WANDB_API_KEY:-}" ]]; then
   WANDB_PROJECT="${WANDB_PROJECT:-SCAPE}"
   WANDB_EXP_NAME="${WANDB_EXP_NAME:-llama2_500M_AdamS_d_${density}_comp_start_step_${start_step}_d_warmup_steps_${density_warmup_steps}_lr_warmup_steps_${lr_warmup_steps}}"
   WANDB_SAVE_DIR="${WANDB_SAVE_DIR:-${CHECKPOINT_PATH}/wandb}"
+
+  # Auto-resume W&B run/curve when restarting from the same checkpoint path.
+  # Override behavior with:
+  #   WANDB_AUTO_RESUME=0    -> always start a fresh run
+  #   WANDB_RUN_ID=<run_id>  -> force a specific run id
+  # WANDB_AUTO_RESUME="${WANDB_AUTO_RESUME:-0}"
+  # if [[ "${WANDB_AUTO_RESUME,,}" != "0" && "${WANDB_AUTO_RESUME,,}" != "false" ]]; then
+  #   if [[ -z "${WANDB_RUN_ID:-}" ]]; then
+  #     latest_run_link="${WANDB_SAVE_DIR}/wandb/latest-run"
+  #     latest_run_name=""
+  #     if [[ -L "${latest_run_link}" ]]; then
+  #       latest_run_name="$(basename "$(readlink -f "${latest_run_link}")")"
+  #     else
+  #       latest_run_name="$(ls -1dt "${WANDB_SAVE_DIR}"/wandb/run-* "${WANDB_SAVE_DIR}"/wandb/offline-run-* 2>/dev/null | head -n 1 | xargs -r basename)"
+  #     fi
+
+  #     if [[ -n "${latest_run_name}" ]]; then
+  #       inferred_run_id="$(echo "${latest_run_name}" | sed -E 's/^(offline-)?run-[0-9_]+-([A-Za-z0-9]+)$/\2/')"
+  #       if [[ "${inferred_run_id}" != "${latest_run_name}" && -n "${inferred_run_id}" ]]; then
+  #         export WANDB_RUN_ID="${inferred_run_id}"
+  #       fi
+  #     fi
+  #   fi
+
+  #   if [[ -n "${WANDB_RUN_ID:-}" ]]; then
+  #     export WANDB_RESUME="${WANDB_RESUME:-allow}"
+  #     echo "W&B resume enabled: run_id=${WANDB_RUN_ID} resume=${WANDB_RESUME}"
+  #   fi
+  # fi
+
   WANDB_ARGS+=(--wandb-project "$WANDB_PROJECT")
   WANDB_ARGS+=(--wandb-exp-name "$WANDB_EXP_NAME")
   WANDB_ARGS+=(--wandb-save-dir "$WANDB_SAVE_DIR")
@@ -94,6 +131,10 @@ fi
 
 NODE_RANK=${SLURM_PROCID:-${SLURM_NODEID:-0}}
 echo "SLURM_PROCID=${SLURM_PROCID:-unset} SLURM_NODEID=${SLURM_NODEID:-unset} node_rank=${NODE_RANK}"
+
+timestamp=$(date +%s)
+log_prefix="llama2_500M_AdamS_d_${density}_comp_start_step_${start_step}_d_warmup_steps_${density_warmup_steps}_lr_warmup_steps_${lr_warmup_steps}_${timestamp}"
+
 
 $CONTAINER_CMD env CC="$CC" CXX="$CXX" CUDAHOSTCXX="$CUDAHOSTCXX" \
   torchrun $TORCHRUN_ARGS /home1/09308/zhengmk/work/optimus-cc/Megatron-LM/pretrain_gpt.py \
@@ -153,6 +194,5 @@ $CONTAINER_CMD env CC="$CC" CXX="$CXX" CUDAHOSTCXX="$CUDAHOSTCXX" \
     --topk-adams-density-warmup-steps $density_warmup_steps \
     --move-clip-grad-to-reducer \
     "${WANDB_ARGS[@]}" \
-    > >(tee -a llama2_500M_AdamS_d_${density}_comp_start_step_${start_step}_d_warmup_steps_${density_warmup_steps}_lr_warmup_steps_${lr_warmup_steps}.out) \
-    2> >(tee -a llama2_500M_AdamS_d_${density}_comp_start_step_${start_step}_d_warmup_steps_${density_warmup_steps}_lr_warmup_steps_${lr_warmup_steps}.err >&2)
-    
+     > >(tee -a "${log_prefix}.out") \
+     2> >(tee -a "${log_prefix}.err" >&2)

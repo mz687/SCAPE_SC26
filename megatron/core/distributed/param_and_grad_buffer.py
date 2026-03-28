@@ -777,6 +777,8 @@ class _ParamAndGradBuffer:
         self.ddp_config = ddp_config
         self.params = params
         self.param_indices = param_indices
+        # Keep a local name map so reducer-side logic can reason about per-parameter policy.
+        self.param_to_name = {param: param_to_name.get(param, '') for param in params}
 
         # Check that params are unique.
         unique_params = set()

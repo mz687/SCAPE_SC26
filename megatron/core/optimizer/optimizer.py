@@ -859,15 +859,29 @@ class Float16OptimizerWithFloat16Params(MixedPrecisionOptimizer):
         if optimizer_key not in state_dict:
             optimizer_key = 'optimizer_state_dict'
             logger.info('***WARNING*** loading optimizer from an old checkpoint ...')
-        if 'common_step' in state_dict[optimizer_key]['state']:
-            common_step = state_dict[optimizer_key]['state'].pop('common_step')
-            self._restore_common_per_param_step(state_dict[optimizer_key], common_step)
+        if optimizer_key not in state_dict:
+            raise KeyError(
+                f"Optimizer state dict must contain 'optimizer' or 'optimizer_state_dict', "
+                f"but got keys: {list(state_dict.keys())}"
+            )
+
+        optimizer_state = state_dict[optimizer_key]
+        if 'state' not in optimizer_state or optimizer_state['state'] is None:
+            logger.warning(
+                "Checkpoint optimizer entry '%s' is missing 'state'; defaulting to empty state.",
+                optimizer_key,
+            )
+            optimizer_state['state'] = {}
+
+        if 'common_step' in optimizer_state['state']:
+            common_step = optimizer_state['state'].pop('common_step')
+            self._restore_common_per_param_step(optimizer_state, common_step)
 
         # Filter and reorder param groups to match current optimizer
-        state_dict[optimizer_key]['param_groups'] = self._filter_and_reorder_param_groups(
-            self.optimizer.param_groups, state_dict[optimizer_key]['param_groups']
+        optimizer_state['param_groups'] = self._filter_and_reorder_param_groups(
+            self.optimizer.param_groups, optimizer_state['param_groups']
         )
-        self.optimizer.load_state_dict(state_dict[optimizer_key])
+        self.optimizer.load_state_dict(optimizer_state)
 
         # Grad scaler.
         if 'grad_scaler' not in state_dict:
@@ -1007,6 +1021,12 @@ class FP32Optimizer(MegatronOptimizer):
         return self.optimizer.state_dict()
 
     def load_state_dict(self, state_dict):
+        if 'state' not in state_dict or state_dict['state'] is None:
+            logger.warning(
+                "Checkpoint optimizer state is missing 'state'; defaulting to empty state."
+            )
+            state_dict['state'] = {}
+
         if 'common_step' in state_dict['state']:
             common_step = state_dict['state'].pop('common_step')
             self._restore_common_per_param_step(state_dict, common_step)

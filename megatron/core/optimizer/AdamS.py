@@ -349,9 +349,13 @@ class AdamS(torch.optim.Optimizer):
         )
         super().__init__(params, defaults)
         self.set_grad_none = set_grad_none
+        # Disable Triton path after loading checkpointed states by default.
+        # This avoids incorrect resume-time updates seen with fused kernel state reuse.
+        self._loaded_from_checkpoint = False
 
     def __setstate__(self, state):
         super().__setstate__(state)
+        self._loaded_from_checkpoint = getattr(self, '_loaded_from_checkpoint', False)
         for group in self.param_groups:
             group.setdefault('maximize', False)
             group.setdefault('adam_w_mode', True)
@@ -365,6 +369,7 @@ class AdamS(torch.optim.Optimizer):
         for param_state in self.state.values():
             if isinstance(param_state, dict):
                 param_state.pop('exp_avg_sq', None)
+        self._loaded_from_checkpoint = True
 
     def zero_grad(self, set_to_none: Optional[bool] = None):
         if set_to_none is None:
@@ -425,20 +430,26 @@ class AdamS(torch.optim.Optimizer):
                     inv_sqrt_bias2 = 1.0
 
                 grad_data = grad.detach()
-                triton_applied = _adams_step_triton(
-                    param,
-                    grad_data,
-                    exp_avg,
-                    beta1=beta1,
-                    beta2=beta2,
-                    lr=lr,
-                    step_size=step_size,
-                    inv_sqrt_bias2=inv_sqrt_bias2,
-                    eps=eps,
-                    weight_decay=weight_decay,
-                    maximize=maximize,
-                    adam_w_mode=adam_w_mode,
+                triton_allowed = (
+                    not self._loaded_from_checkpoint
+                    or os.environ.get('ADAMS_ALLOW_TRITON_AFTER_LOAD', '0') == '1'
                 )
+                triton_applied = False
+                if triton_allowed:
+                    triton_applied = _adams_step_triton(
+                        param,
+                        grad_data,
+                        exp_avg,
+                        beta1=beta1,
+                        beta2=beta2,
+                        lr=lr,
+                        step_size=step_size,
+                        inv_sqrt_bias2=inv_sqrt_bias2,
+                        eps=eps,
+                        weight_decay=weight_decay,
+                        maximize=maximize,
+                        adam_w_mode=adam_w_mode,
+                    )
                 if not triton_applied:
                     _adams_step_torch(
                         param,

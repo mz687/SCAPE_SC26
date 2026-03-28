@@ -1,0 +1,6 @@
+WARNING:huggingface_hub.file_download:Could not set the permissions on the file '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'. Error: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'.
+Continuing without setting permissions.
+> setting tensorboard ...
+WARNING:huggingface_hub.file_download:Could not set the permissions on the file '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'. Error: [Errno 2] No such file or directory: '/root/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/blobs/2ef41cbc275000b29afe157ba487f0530b8c26dc.incomplete'.
+Continuing without setting permissions.
+WARNING: one_logger package is required to enable e2e metrics tracking. please go to https://confluence.nvidia.com/display/MLWFO/Package+Repositories for details to install it

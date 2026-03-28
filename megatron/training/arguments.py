@@ -919,9 +919,30 @@ def validate_args(args, defaults={}):
             '--topk-adams-start-iter must be >= 0'
         assert args.topk_adams_density_warmup_steps >= 0, \
             '--topk-adams-density-warmup-steps must be >= 0'
+        assert args.topk_adams_density_cooldown_steps >= 0, \
+            '--topk-adams-density-cooldown-steps must be >= 0'
+        assert args.topk_adams_density_cooldown_start_step >= -1, \
+            '--topk-adams-density-cooldown-start-step must be >= -1'
     if args.move_clip_grad_to_reducer:
         assert args.use_topk_adams_reducer, \
             '--move-clip-grad-to-reducer requires --use-topk-adams-reducer'
+    if args.use_topk_mask_overlap_tracker:
+        assert args.optimizer == 'adams', \
+            '--use-topk-mask-overlap-tracker requires --optimizer adams'
+        assert not args.use_topk_adams_reducer, \
+            '--use-topk-mask-overlap-tracker does not support --use-topk-adams-reducer'
+        assert not args.use_distributed_optimizer, \
+            '--use-topk-mask-overlap-tracker does not support --use-distributed-optimizer'
+        assert not args.use_torch_fsdp2 and not args.use_megatron_fsdp, \
+            '--use-topk-mask-overlap-tracker is supported only on standard MCore DDP'
+        assert args.topk_mask_overlap_density > 0.0, \
+            '--topk-mask-overlap-density must be > 0'
+        assert args.topk_mask_overlap_start_iter >= 0, \
+            '--topk-mask-overlap-start-iter must be >= 0'
+        assert args.topk_mask_overlap_max_steps >= 0, \
+            '--topk-mask-overlap-max-steps must be >= 0'
+        assert str(args.topk_mask_overlap_reference_mode).lower() in ('first', 'prev'), \
+            "--topk-mask-overlap-reference-mode must be either 'first' or 'prev'"
 
     # Map string data-type to torch.dtype.
     dtype_map = {
@@ -2708,11 +2729,31 @@ def _add_distributed_args(parser):
     group.add_argument('--topk-adams-density-start', type=float, default=1.0,
                        help='Initial top-k density before warmup reaches target density.')
     group.add_argument('--topk-adams-density-warmup-steps', type=int, default=0,
-                       help='Number of warmup steps from density-start to density.')
+                       help='Number of geometric warmup steps from density-start to density.')
+    group.add_argument('--topk-adams-density-cooldown-steps', type=int, default=0,
+                       help='Optional geometric cooldown steps from target density to 1.0.')
+    group.add_argument('--topk-adams-density-cooldown-start-step', type=int, default=-1,
+                       help='Step to start cooldown; negative means start at --topk-adams-start-iter.')
+    group.add_argument('--no-topk-adams-use-exclude-from-topk', action='store_false',
+                       dest='topk_adams_use_exclude_from_topk',
+                       help='Disable name-based exclusion (e.g., layernorm/rmsnorm) from top-k sparsification.')
     group.add_argument('--move-clip-grad-to-reducer', action='store_true', default=False,
                        help='If set, perform global grad clipping inside top-k reducer on raw synced gradients.')
     group.add_argument('--use-fp8-topk-quant', action='store_true', default=False,
                        help='Quantize sparse top-k payloads to FP8 before synchronization.')
+    group.add_argument('--use-topk-mask-overlap-tracker', action='store_true', default=False,
+                       help='Record per-parameter top-k mask overlap on AdamS momentum derived from synchronized DDP gradients.')
+    group.add_argument('--topk-mask-overlap-density', type=float, default=0.01,
+                       help='Top-k density (<1.0) or absolute k (>=1) used by the overlap tracker.')
+    group.add_argument('--topk-mask-overlap-start-iter', type=int, default=0,
+                       help='Iteration to start recording top-k mask overlap metrics.')
+    group.add_argument('--topk-mask-overlap-reference-mode', type=str, default='first',
+                       choices=['first', 'prev'],
+                       help="Reference mask mode for overlap tracking: 'first' or 'prev'.")
+    group.add_argument('--topk-mask-overlap-output-dir', type=str, default='/tmp/topk_mask_overlap',
+                       help='Directory where the overlap tracker writes CSV outputs.')
+    group.add_argument('--topk-mask-overlap-max-steps', type=int, default=0,
+                       help='Maximum number of post-start steps to record; 0 means unlimited.')
     group.add_argument('--use-nccl-ub', action='store_true', dest='nccl_ub',
                        help='Use the userbuffer registration for DP/FSDP communication buffers.'
                        'This option will reduce GPU SM usage for the DP/FSDP communication,'
