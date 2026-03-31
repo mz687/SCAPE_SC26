@@ -188,6 +188,9 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         self._start_iter = max(0, int(ddp_config.topk_adams_start_iter))
         self._use_fp8_topk_quant = bool(ddp_config.use_fp8_topk_quant)
         self._move_clip_grad_to_reducer = bool(ddp_config.move_clip_grad_to_reducer)
+        self._offload_full_param_to_cpu = bool(
+            getattr(ddp_config, 'topk_adams_full_param_cpu_offload', False)
+        )
         self._use_exclude_from_topk = bool(
             getattr(ddp_config, 'topk_adams_use_exclude_from_topk', True)
         )
@@ -202,6 +205,8 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
 
         self._prepared_iteration: Optional[int] = None
         self._async_mask_stream: Optional[torch.cuda.Stream] = None
+        self._payload_allreduce_stream: Optional[torch.cuda.Stream] = None
+        self._param_offload_stream: Optional[torch.cuda.Stream] = None
 
         self._profile_enabled = self._env_flag('MEGATRON_TOPK_REDUCER_PROFILE', default=False)
         self._profile_sync_cuda = self._env_flag(
@@ -238,6 +243,19 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
                 )
             except Exception:
                 self._async_mask_stream = torch.cuda.Stream()
+            try:
+                self._payload_allreduce_stream = torch.cuda.Stream(
+                    device=torch.cuda.current_device()
+                )
+            except Exception:
+                self._payload_allreduce_stream = torch.cuda.Stream()
+            if self._offload_full_param_to_cpu:
+                try:
+                    self._param_offload_stream = torch.cuda.Stream(
+                        device=torch.cuda.current_device()
+                    )
+                except Exception:
+                    self._param_offload_stream = torch.cuda.Stream()
 
         for buffer in self._buffers:
             grad_data = buffer.grad_data
@@ -315,6 +333,24 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         self._last_norm_step: Optional[int] = None
         self._clip_grad_max_norm: float = 0.0
         self._grad_stats_parallel_group: Optional[torch.distributed.ProcessGroup] = None
+        self._full_param_fp32: List[Optional[torch.Tensor]] = []
+        self._warned_sparse_param_sync_overlap = False
+
+        for buffer in self._buffers:
+            param_data = buffer.param_data
+            if param_data is None or param_data.numel() == 0:
+                self._full_param_fp32.append(None)
+            else:
+                if self._offload_full_param_to_cpu:
+                    full_param = param_data.detach().to(dtype=torch.float32, device='cpu').clone()
+                    if torch.cuda.is_available():
+                        try:
+                            full_param = full_param.pin_memory()
+                        except Exception:
+                            pass
+                    self._full_param_fp32.append(full_param)
+                else:
+                    self._full_param_fp32.append(param_data.detach().to(torch.float32).clone())
 
     @staticmethod
     def _iter_optimizer_wrappers(optimizer: Any) -> List[Any]:
@@ -570,7 +606,7 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
 
         total_model_params = sum(len(buffer_param_slices) for buffer_param_slices in self._buffer_param_slices)
         mapped_model_params = len(self._param_to_optim_param)
-        if mapped_model_params < total_model_params:
+        if (not self._ddp_config.use_distributed_optimizer) and mapped_model_params < total_model_params:
             logger.warning(
                 "Top-k AdamS reducer optimizer mapping incomplete: mapped %d / %d model parameters.",
                 mapped_model_params,
@@ -603,6 +639,334 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
                 state.current_mask_u8.copy_(state.next_mask_u8)
                 state.has_current_mask = True
         self._prepared_iteration = int(train_iter)
+
+    def can_replace_dense_param_all_gather(self) -> bool:
+        """Whether sparse post-step sync can replace dense param all-gather."""
+        return bool(
+            self._ddp_config.use_distributed_optimizer
+            and (not self._ddp_config.overlap_param_gather)
+        )
+
+    def _ensure_full_param_storage(
+        self,
+        buffer_idx: int,
+        param_data: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        full_param = self._full_param_fp32[buffer_idx]
+        if self._offload_full_param_to_cpu:
+            needs_init = (
+                full_param is None
+                or full_param.numel() != param_data.numel()
+                or full_param.device.type != 'cpu'
+            )
+            if needs_init:
+                full_param = param_data.detach().to(dtype=torch.float32, device='cpu').clone()
+                if torch.cuda.is_available():
+                    try:
+                        full_param = full_param.pin_memory()
+                    except Exception:
+                        pass
+                self._full_param_fp32[buffer_idx] = full_param
+            return full_param
+
+        needs_init = (
+            full_param is None
+            or full_param.numel() != param_data.numel()
+            or full_param.device != param_data.device
+        )
+        if needs_init:
+            full_param = param_data.detach().to(torch.float32).clone()
+            self._full_param_fp32[buffer_idx] = full_param
+        return full_param
+
+    def _prefetch_full_param_from_cpu(
+        self,
+        full_param_cpu: torch.Tensor,
+        device: torch.device,
+    ) -> Tuple[torch.Tensor, Optional[torch.cuda.Event]]:
+        full_param_gpu = torch.empty(
+            full_param_cpu.numel(),
+            dtype=torch.float32,
+            device=device,
+        )
+        can_async = (
+            self._param_offload_stream is not None
+            and full_param_gpu.is_cuda
+            and full_param_cpu.device.type == 'cpu'
+            and full_param_cpu.is_pinned()
+        )
+        if can_async:
+            with torch.cuda.stream(self._param_offload_stream):
+                full_param_gpu.copy_(full_param_cpu, non_blocking=True)
+                ready_event = torch.cuda.Event()
+                ready_event.record(self._param_offload_stream)
+            return full_param_gpu, ready_event
+
+        full_param_gpu.copy_(full_param_cpu, non_blocking=False)
+        return full_param_gpu, None
+
+    def _queue_full_param_offload_to_cpu(
+        self,
+        full_param_gpu: torch.Tensor,
+        full_param_cpu: torch.Tensor,
+    ) -> bool:
+        can_async = (
+            self._param_offload_stream is not None
+            and full_param_gpu.is_cuda
+            and full_param_cpu.device.type == 'cpu'
+            and full_param_cpu.is_pinned()
+        )
+        if can_async:
+            current_stream = torch.cuda.current_stream(full_param_gpu.device)
+            with torch.cuda.stream(self._param_offload_stream):
+                self._param_offload_stream.wait_stream(current_stream)
+                full_param_cpu.copy_(full_param_gpu, non_blocking=True)
+            return True
+
+        full_param_cpu.copy_(full_param_gpu.to(dtype=torch.float32, device='cpu'))
+        return False
+
+    @torch.no_grad()
+    def sync_sparse_params_from_local_shards(self) -> bool:
+        """Synchronize only selected updated params and locally decay non-topk params.
+
+        This path keeps a full FP32 param replica on each rank and avoids dense
+        per-step parameter all-gather in distributed-optimizer mode.
+        """
+        if not self._ddp_config.use_distributed_optimizer:
+            return False
+        if self._ddp_config.overlap_param_gather:
+            if not self._warned_sparse_param_sync_overlap:
+                logger.warning(
+                    "Top-k sparse param sync currently requires overlap_param_gather=False; "
+                    "falling back to dense param all-gather."
+                )
+                self._warned_sparse_param_sync_overlap = True
+            return False
+
+        work_items: List[Tuple[int, _ParamAndGradBuffer]] = []
+        for buffer_idx, buffer in enumerate(self._buffers):
+            param_data = buffer.param_data
+            if param_data is None or param_data.numel() == 0:
+                continue
+            if not self._buffer_param_slices[buffer_idx]:
+                continue
+            work_items.append((buffer_idx, buffer))
+
+        pending_offload_tensors: List[torch.Tensor] = []
+        prefetched_buffer_idx: Optional[int] = None
+        prefetched_full_param: Optional[torch.Tensor] = None
+        prefetched_ready_event: Optional[torch.cuda.Event] = None
+
+        def launch_prefetch(
+            work_pos: int,
+        ) -> Tuple[Optional[int], Optional[torch.Tensor], Optional[torch.cuda.Event]]:
+            if work_pos >= len(work_items):
+                return None, None, None
+            next_buffer_idx, next_buffer = work_items[work_pos]
+            next_param_data = next_buffer.param_data
+            if next_param_data is None:
+                return next_buffer_idx, None, None
+            full_storage = self._ensure_full_param_storage(next_buffer_idx, next_param_data)
+            if full_storage is None:
+                return next_buffer_idx, None, None
+            if not self._offload_full_param_to_cpu:
+                return next_buffer_idx, full_storage, None
+            full_param_gpu, ready_event = self._prefetch_full_param_from_cpu(
+                full_storage, next_param_data.device
+            )
+            return next_buffer_idx, full_param_gpu, ready_event
+
+        if self._offload_full_param_to_cpu and work_items:
+            (
+                prefetched_buffer_idx,
+                prefetched_full_param,
+                prefetched_ready_event,
+            ) = launch_prefetch(0)
+
+        for work_pos, (buffer_idx, buffer) in enumerate(work_items):
+            param_data = buffer.param_data
+            if param_data is None:
+                continue
+
+            state = self._buffer_states[buffer_idx]
+            param_slices = self._buffer_param_slices[buffer_idx]
+            group = buffer.data_parallel_group
+            group_rank = self._buffer_group_ranks[buffer_idx]
+            group_size = max(1, self._group_size(group))
+
+            mask_u8 = state.current_mask_u8
+            if mask_u8.numel() != param_data.numel():
+                raise RuntimeError(
+                    "Top-k sparse param sync mask/param size mismatch: "
+                    f"mask={int(mask_u8.numel())} param={int(param_data.numel())}."
+                )
+            current_mask = mask_u8.bool()
+            selected_global_idx = torch.nonzero(current_mask, as_tuple=False).flatten()
+            total_selected = int(selected_global_idx.numel())
+
+            if self._offload_full_param_to_cpu:
+                if prefetched_buffer_idx != buffer_idx or prefetched_full_param is None:
+                    (
+                        prefetched_buffer_idx,
+                        prefetched_full_param,
+                        prefetched_ready_event,
+                    ) = launch_prefetch(work_pos)
+                full_param = prefetched_full_param
+                if full_param is None:
+                    continue
+                if prefetched_ready_event is not None:
+                    torch.cuda.current_stream(param_data.device).wait_event(prefetched_ready_event)
+
+                (
+                    prefetched_buffer_idx,
+                    prefetched_full_param,
+                    prefetched_ready_event,
+                ) = launch_prefetch(work_pos + 1)
+            else:
+                full_param = self._ensure_full_param_storage(buffer_idx, param_data)
+                if full_param is None:
+                    continue
+
+            selected_updated_values: Optional[torch.Tensor] = None
+            payload_allreduce_handle: Optional[Any] = None
+            payload_allreduce_on_side_stream = False
+            if total_selected > 0:
+                selected_updated_values = torch.zeros(
+                    total_selected, dtype=torch.float32, device=param_data.device
+                )
+                for param_slice in param_slices:
+                    param = param_slice.param
+                    local_start, local_end, _, _ = self._distopt_local_shard_range(
+                        buffer=buffer,
+                        param=param,
+                        group_rank=group_rank,
+                        group_size=group_size,
+                    )
+                    local_numel = int(local_end - local_start)
+                    if local_numel <= 0:
+                        continue
+
+                    payload_start = int(
+                        torch.searchsorted(
+                            selected_global_idx,
+                            torch.tensor(
+                                local_start,
+                                dtype=torch.int64,
+                                device=selected_global_idx.device,
+                            ),
+                            right=False,
+                        ).item()
+                    )
+                    payload_end = int(
+                        torch.searchsorted(
+                            selected_global_idx,
+                            torch.tensor(
+                                local_end,
+                                dtype=torch.int64,
+                                device=selected_global_idx.device,
+                            ),
+                            right=False,
+                        ).item()
+                    )
+                    payload_len = max(0, payload_end - payload_start)
+                    if payload_len <= 0:
+                        continue
+
+                    local_mask = current_mask[local_start:local_end]
+                    local_selected_values = param_data[local_start:local_end].to(torch.float32)[
+                        local_mask
+                    ]
+                    if int(local_selected_values.numel()) != payload_len:
+                        raise RuntimeError(
+                            "Top-k sparse param sync payload mismatch: local selected count "
+                            "changed between mask and payload packing."
+                        )
+                    selected_updated_values[payload_start:payload_end].copy_(local_selected_values)
+
+                if group_size > 1:
+                    if (
+                        self._payload_allreduce_stream is not None
+                        and selected_updated_values.is_cuda
+                    ):
+                        payload_allreduce_on_side_stream = True
+                        current_stream = torch.cuda.current_stream(selected_updated_values.device)
+                        self._payload_allreduce_stream.wait_stream(current_stream)
+                        with torch.cuda.stream(self._payload_allreduce_stream):
+                            payload_allreduce_handle = torch.distributed.all_reduce(
+                                selected_updated_values,
+                                op=torch.distributed.ReduceOp.SUM,
+                                group=group,
+                                async_op=True,
+                            )
+                    else:
+                        payload_allreduce_handle = torch.distributed.all_reduce(
+                            selected_updated_values,
+                            op=torch.distributed.ReduceOp.SUM,
+                            group=group,
+                            async_op=True,
+                        )
+
+            # For non-topk positions, apply decoupled weight decay update locally on FP32 replica.
+            # This is intentionally overlapped with sparse payload communication above.
+            for param_slice in param_slices:
+                start = int(param_slice.start)
+                end = int(param_slice.end)
+                param = param_slice.param
+                if end <= start:
+                    continue
+
+                group_cfg = self._param_to_group.get(param, None)
+                if group_cfg is None:
+                    continue
+                lr = float(group_cfg.get('lr', 0.0))
+                weight_decay = self._group_weight_decay(group_cfg)
+                if lr == 0.0 or weight_decay == 0.0:
+                    continue
+
+                decay_factor = 1.0 - lr * weight_decay
+                if abs(decay_factor - 1.0) <= 1.0e-12:
+                    continue
+
+                mask_slice = current_mask[start:end]
+                full_slice = full_param[start:end]
+                selected_count = int(mask_slice.sum().item())
+                if selected_count == 0:
+                    full_slice.mul_(decay_factor)
+                elif selected_count < int(end - start):
+                    non_selected = ~mask_slice
+                    full_slice[non_selected].mul_(decay_factor)
+
+            if payload_allreduce_handle is not None:
+                payload_allreduce_handle.wait()
+                if payload_allreduce_on_side_stream and selected_updated_values is not None:
+                    torch.cuda.current_stream(selected_updated_values.device).wait_stream(
+                        self._payload_allreduce_stream
+                    )
+
+            # For topk positions, use owner-updated values synchronized via sparse all-reduce.
+            if selected_updated_values is not None and total_selected > 0:
+                full_param.index_copy_(0, selected_global_idx, selected_updated_values)
+
+            # Materialize full updated params for next forward.
+            param_data.copy_(full_param.to(param_data.dtype))
+
+            if self._offload_full_param_to_cpu:
+                full_param_cpu = self._full_param_fp32[buffer_idx]
+                if full_param_cpu is None or full_param_cpu.device.type != 'cpu':
+                    raise RuntimeError(
+                        "Top-k CPU offload expected CPU full-param storage, but found invalid buffer."
+                    )
+                queued_async = self._queue_full_param_offload_to_cpu(full_param, full_param_cpu)
+                if queued_async:
+                    pending_offload_tensors.append(full_param)
+
+        if pending_offload_tensors and self._param_offload_stream is not None:
+            wait_device = pending_offload_tensors[0].device
+            torch.cuda.current_stream(wait_device).wait_stream(self._param_offload_stream)
+            pending_offload_tensors.clear()
+
+        return True
 
     def _wait_next_mask_allreduce(self, state: _BufferState) -> None:
         handle = state.next_mask_allreduce_handle
@@ -1136,11 +1500,12 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
             return
         key_base = profile_key or 'allreduce.average'
         t_allreduce = self._profile_tic(tensor)
-        torch.distributed.all_reduce(tensor, group=group)
-        self._profile_toc(f'{key_base}.allreduce_ms', t_allreduce, tensor)
-        t_div = self._profile_tic(tensor)
-        tensor.div_(world_size)
-        self._profile_toc(f'{key_base}.div_ms', t_div, tensor)
+        torch.distributed.all_reduce(
+            tensor,
+            op=torch.distributed.ReduceOp.AVG,
+            group=group,
+        )
+        self._profile_toc(f'{key_base}.allreduce_avg_ms', t_allreduce, tensor)
 
     def _fp8_allreduce_(
         self,
@@ -1406,6 +1771,139 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
             return float(group['weight_decay_reducer'])
         return float(group.get('weight_decay', 0.0))
 
+    @staticmethod
+    def _distopt_local_shard_range(
+        buffer: _ParamAndGradBuffer,
+        param: torch.nn.Parameter,
+        group_rank: int,
+        group_size: int,
+    ) -> Tuple[int, int, int, int]:
+        """Return local shard interval in grad-buffer space for one param."""
+        param_start, param_end, bucket_id = buffer.param_index_map[param]
+        param_start = int(param_start)
+        param_end = int(param_end)
+        param_numel = param_end - param_start
+        bucket = buffer.buckets[int(bucket_id)]
+        bucket_numel = int(bucket.grad_data.numel())
+        if group_size <= 0:
+            raise RuntimeError(f"Invalid group size {group_size} for distributed optimizer top-k.")
+        if bucket_numel % group_size != 0:
+            raise RuntimeError(
+                f"Bucket size {bucket_numel} is not divisible by group size {group_size}."
+            )
+        shard_size = bucket_numel // group_size
+        local_bucket_start = int(bucket.offset) + int(group_rank) * shard_size
+        local_bucket_end = local_bucket_start + shard_size
+        local_start = max(param_start, local_bucket_start)
+        local_end = min(param_end, local_bucket_end)
+        local_param_start = max(0, local_start - param_start)
+        return local_start, local_end, local_param_start, param_numel
+
+    @staticmethod
+    def _stable_argsort_desc(values: torch.Tensor) -> torch.Tensor:
+        try:
+            return torch.argsort(values, descending=True, stable=True)
+        except TypeError:
+            # Fallback for torch builds that do not expose stable argsort.
+            order = sorted(
+                range(int(values.numel())),
+                key=lambda i: float(values[i].item()),
+                reverse=True,
+            )
+            return torch.tensor(order, device=values.device, dtype=torch.int64)
+
+    def _distopt_global_topk_local_positions(
+        self,
+        local_scores_abs: torch.Tensor,
+        local_param_start: int,
+        global_param_numel: int,
+        k: int,
+        group: torch.distributed.ProcessGroup,
+    ) -> torch.Tensor:
+        """Select exact global top-k for a parameter and return local selected positions."""
+        local_numel = int(local_scores_abs.numel())
+        if k <= 0 or global_param_numel <= 0:
+            return torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+
+        group_size = self._group_size(group)
+        local_take = min(int(k), local_numel)
+        if local_take > 0:
+            local_scores, local_idx = torch.topk(local_scores_abs, k=local_take, sorted=False)
+            local_global_idx = local_idx.to(torch.int64) + int(local_param_start)
+            local_scores = local_scores.to(torch.float32)
+        else:
+            local_scores = torch.empty(0, dtype=torch.float32, device=local_scores_abs.device)
+            local_global_idx = torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+
+        if group_size <= 1:
+            if local_take <= 0:
+                return torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+            if local_take > k:
+                order = self._stable_argsort_desc(local_scores)
+                local_global_idx = local_global_idx[order[:k]]
+            return (local_global_idx - int(local_param_start)).to(torch.int64)
+
+        take_tensor = torch.tensor([local_take], dtype=torch.int64, device=local_scores_abs.device)
+        take_gather = [torch.zeros_like(take_tensor) for _ in range(group_size)]
+        torch.distributed.all_gather(take_gather, take_tensor, group=group)
+        gathered_take = [int(t.item()) for t in take_gather]
+        max_take = max(gathered_take) if gathered_take else 0
+        if max_take <= 0:
+            return torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+
+        padded_scores = torch.full(
+            (max_take,), -torch.inf, dtype=torch.float32, device=local_scores_abs.device
+        )
+        padded_idx = torch.full((max_take,), -1, dtype=torch.int64, device=local_scores_abs.device)
+        if local_take > 0:
+            padded_scores[:local_take].copy_(local_scores)
+            padded_idx[:local_take].copy_(local_global_idx)
+
+        gathered_scores = [torch.empty_like(padded_scores) for _ in range(group_size)]
+        gathered_idx = [torch.empty_like(padded_idx) for _ in range(group_size)]
+        torch.distributed.all_gather(gathered_scores, padded_scores, group=group)
+        torch.distributed.all_gather(gathered_idx, padded_idx, group=group)
+
+        score_chunks: List[torch.Tensor] = []
+        idx_chunks: List[torch.Tensor] = []
+        for rank_idx, rank_take in enumerate(gathered_take):
+            if rank_take <= 0:
+                continue
+            score_chunks.append(gathered_scores[rank_idx][:rank_take])
+            idx_chunks.append(gathered_idx[rank_idx][:rank_take])
+
+        if not idx_chunks:
+            return torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+
+        candidate_scores = torch.cat(score_chunks, dim=0)
+        candidate_idx = torch.cat(idx_chunks, dim=0)
+        valid = candidate_idx >= 0
+        candidate_scores = candidate_scores[valid]
+        candidate_idx = candidate_idx[valid]
+        if candidate_idx.numel() == 0:
+            return torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+
+        if int(candidate_idx.numel()) > int(k):
+            # Deterministic tie-break: sort by idx ascending first, then stable
+            # score sort descending.
+            by_idx = torch.argsort(candidate_idx)
+            candidate_idx = candidate_idx[by_idx]
+            candidate_scores = candidate_scores[by_idx]
+            by_score = self._stable_argsort_desc(candidate_scores)
+            candidate_idx = candidate_idx[by_score[: int(k)]]
+
+        local_begin = int(local_param_start)
+        local_end = local_begin + local_numel
+        local_selected = candidate_idx[
+            (candidate_idx >= local_begin) & (candidate_idx < local_end)
+        ]
+        if local_selected.numel() == 0:
+            return torch.empty(0, dtype=torch.int64, device=local_scores_abs.device)
+        local_selected = local_selected - local_begin
+        if local_selected.numel() > 1:
+            local_selected = torch.unique(local_selected, sorted=True)
+        return local_selected.to(torch.int64)
+
     def _reduce_dense_fallback(
         self,
         grad_data: torch.Tensor,
@@ -1456,6 +1954,429 @@ class TopKPerLayerSyncMomentumAdamSFP8ReducerV2:
         move_clip_grad_to_reducer = bool(self._move_clip_grad_to_reducer)
         pending_updates: List[_PendingUpdate] = []
         synced_grad_buffers: List[Optional[torch.Tensor]] = [None] * len(self._buffers)
+
+        if self._ddp_config.use_distributed_optimizer:
+            local_grad_slices: List[torch.Tensor] = []
+            for buffer_idx, buffer in enumerate(self._buffers):
+                grad_data = buffer.grad_data
+                if grad_data is None or grad_data.numel() == 0:
+                    continue
+
+                state = self._buffer_states[buffer_idx]
+                param_slices = self._buffer_param_slices[buffer_idx]
+                group = buffer.data_parallel_group
+                group_rank = self._buffer_group_ranks[buffer_idx]
+                group_size = max(1, self._group_size(group))
+
+                state.current_mask_u8.zero_()
+                state.next_mask_u8.zero_()
+                state.next_mask_allreduce_handle = None
+                state.next_mask_allreduce_uses_packed = False
+                state.has_current_mask = True
+                state.has_next_mask = False
+
+                if not param_slices:
+                    continue
+
+                if dense_mode:
+                    # Replace skipped default RS path with dense all-reduce in warmup/forced-dense mode.
+                    self._allreduce_average_(
+                        grad_data,
+                        group,
+                        profile_key='distopt.dense.buffer.grad_allreduce',
+                    )
+                    for param_slice in param_slices:
+                        param = param_slice.param
+                        local_start, local_end, _, _ = self._distopt_local_shard_range(
+                            buffer=buffer,
+                            param=param,
+                            group_rank=group_rank,
+                            group_size=group_size,
+                        )
+                        local_numel = int(local_end - local_start)
+                        if local_numel <= 0:
+                            continue
+                        grad_slice = grad_data[local_start:local_end]
+                        state.residual[local_start:local_end].zero_()
+                        state.current_mask_u8[local_start:local_end].fill_(1)
+                        total_selected += local_numel
+                        total_numel += local_numel
+                        if move_clip_grad_to_reducer:
+                            local_grad_slices.append(grad_slice)
+                        if synced_grad_sq_sum is None:
+                            synced_grad_sq_sum = torch.zeros(
+                                (), dtype=torch.float64, device=grad_slice.device
+                            )
+                        if param_is_not_shared(
+                            param
+                        ) and tensor_parallel.param_is_not_tensor_parallel_duplicate(param):
+                            synced_grad_sq_sum.add_(grad_slice.to(torch.float64).pow(2).sum())
+                    # Broadcast dense mask ownership so every rank keeps a global mask view.
+                    self._allreduce_max_mask_sync(
+                        state,
+                        group,
+                        profile_key='distopt.mask.current_sync_ms',
+                    )
+                    continue
+
+                local_mapping_bad = 0
+                for param_slice in param_slices:
+                    param = param_slice.param
+                    local_start, local_end, _, _ = self._distopt_local_shard_range(
+                        buffer=buffer,
+                        param=param,
+                        group_rank=group_rank,
+                        group_size=group_size,
+                    )
+                    local_numel = int(local_end - local_start)
+                    if local_numel <= 0:
+                        continue
+                    state_entry = self._optimizer_state_entry(param)
+                    if (
+                        param not in self._param_to_group
+                        or state_entry is None
+                        or 'exp_avg' not in state_entry
+                        or int(state_entry['exp_avg'].numel()) != local_numel
+                    ):
+                        local_mapping_bad = 1
+                        break
+                mapping_bad_tensor = torch.tensor(
+                    [local_mapping_bad], dtype=torch.int32, device=grad_data.device
+                )
+                if group_size > 1:
+                    torch.distributed.all_reduce(
+                        mapping_bad_tensor,
+                        op=torch.distributed.ReduceOp.MAX,
+                        group=group,
+                    )
+                if int(mapping_bad_tensor.item()) != 0:
+                    if not self._warned_missing_mapping:
+                        logger.warning(
+                            "Top-k AdamS reducer found incomplete sharded AdamS state mapping "
+                            "in distributed optimizer mode. Falling back to dense sync for affected buffers."
+                        )
+                        self._warned_missing_mapping = True
+                    self._allreduce_average_(
+                        grad_data,
+                        group,
+                        profile_key='distopt.fallback.buffer.grad_allreduce',
+                    )
+                    for param_slice in param_slices:
+                        param = param_slice.param
+                        local_start, local_end, _, _ = self._distopt_local_shard_range(
+                            buffer=buffer,
+                            param=param,
+                            group_rank=group_rank,
+                            group_size=group_size,
+                        )
+                        local_numel = int(local_end - local_start)
+                        if local_numel <= 0:
+                            continue
+                        grad_slice = grad_data[local_start:local_end]
+                        state.residual[local_start:local_end].zero_()
+                        state.current_mask_u8[local_start:local_end].fill_(1)
+                        total_selected += local_numel
+                        total_numel += local_numel
+                        if move_clip_grad_to_reducer:
+                            local_grad_slices.append(grad_slice)
+                        if synced_grad_sq_sum is None:
+                            synced_grad_sq_sum = torch.zeros(
+                                (), dtype=torch.float64, device=grad_slice.device
+                            )
+                        if param_is_not_shared(
+                            param
+                        ) and tensor_parallel.param_is_not_tensor_parallel_duplicate(param):
+                            synced_grad_sq_sum.add_(grad_slice.to(torch.float64).pow(2).sum())
+                    # Keep mask semantics consistent across ranks in dense fallback.
+                    self._allreduce_max_mask_sync(
+                        state,
+                        group,
+                        profile_key='distopt.mask.current_sync_ms',
+                    )
+                    continue
+
+                local_entries: List[Dict[str, Any]] = []
+                for param_slice in param_slices:
+                    start = int(param_slice.start)
+                    end = int(param_slice.end)
+                    param = param_slice.param
+                    if end <= start:
+                        continue
+
+                    local_start, local_end, _, _ = self._distopt_local_shard_range(
+                        buffer=buffer,
+                        param=param,
+                        group_rank=group_rank,
+                        group_size=group_size,
+                    )
+                    local_numel = max(0, int(local_end - local_start))
+                    local_slice_end = local_start + local_numel
+                    if local_numel <= 0:
+                        continue
+
+                    group_cfg = self._param_to_group.get(param, {})
+                    beta1, _ = group_cfg.get('betas', (0.9, 0.999))
+                    beta1 = float(beta1)
+
+                    param_state = self._ensure_optimizer_state_entry(param)
+                    exp_avg_prev = param_state['exp_avg'].view(-1).to(torch.float32).clone()
+                    grad_slice = grad_data[local_start:local_slice_end]
+                    grad_fp32 = grad_slice.to(torch.float32)
+                    residual_slice = state.residual[local_start:local_slice_end]
+                    corrected_local = exp_avg_prev * beta1
+                    corrected_local.add_(grad_fp32, alpha=1.0 - beta1)
+                    corrected_local.add_(residual_slice)
+                    local_scores_abs = corrected_local.abs()
+
+                    if param_slice.exclude_from_topk or current_density >= 1.0:
+                        local_selected = torch.arange(
+                            local_numel, device=grad_data.device, dtype=torch.int64
+                        )
+                    else:
+                        # In dist-opt local-topk mode, select sparsity on local shard and
+                        # later synchronize ownership masks with all-reduce(MAX).
+                        k = self._topk_k(current_density, local_numel)
+                        if k <= 0:
+                            local_selected = torch.empty(
+                                0, dtype=torch.int64, device=grad_data.device
+                            )
+                        elif k >= local_numel:
+                            local_selected = torch.arange(
+                                local_numel, device=grad_data.device, dtype=torch.int64
+                            )
+                        else:
+                            _, local_selected = torch.topk(local_scores_abs, k=k, sorted=False)
+
+                    selected_mask = torch.zeros(local_numel, dtype=torch.bool, device=grad_data.device)
+                    if local_selected.numel() > 0:
+                        selected_mask.index_fill_(0, local_selected, True)
+                    state.current_mask_u8[local_start:local_slice_end].copy_(
+                        selected_mask.to(torch.uint8)
+                    )
+                    local_entries.append(
+                        {
+                            "param": param,
+                            "local_start": local_start,
+                            "local_slice_end": local_slice_end,
+                            "beta1": beta1,
+                            "exp_avg_prev": exp_avg_prev,
+                            "corrected_local": corrected_local,
+                            "residual_slice": residual_slice,
+                            "grad_slice": grad_slice,
+                            "payload_offset": 0,
+                            "payload_length": 0,
+                        }
+                    )
+
+                # Synchronize local top-k ownership into a global mask for this buffer.
+                self._allreduce_max_mask_sync(
+                    state,
+                    group,
+                    profile_key='distopt.mask.current_sync_ms',
+                )
+
+                current_mask = state.current_mask_u8.bool()
+                selected_global_idx = torch.nonzero(current_mask, as_tuple=False).flatten()
+                total_payload_numel = int(selected_global_idx.numel())
+                synced_payload_flat: Optional[torch.Tensor] = None
+                quant_error_flat: Optional[torch.Tensor] = None
+                if total_payload_numel > 0:
+                    packed_payload = torch.zeros(
+                        total_payload_numel,
+                        dtype=torch.float32,
+                        device=grad_data.device,
+                    )
+                    for entry in local_entries:
+                        local_start = int(entry["local_start"])
+                        local_slice_end = int(entry["local_slice_end"])
+                        payload_start = int(
+                            torch.searchsorted(
+                                selected_global_idx,
+                                torch.tensor(
+                                    local_start,
+                                    dtype=torch.int64,
+                                    device=selected_global_idx.device,
+                                ),
+                                right=False,
+                            ).item()
+                        )
+                        payload_end = int(
+                            torch.searchsorted(
+                                selected_global_idx,
+                                torch.tensor(
+                                    local_slice_end,
+                                    dtype=torch.int64,
+                                    device=selected_global_idx.device,
+                                ),
+                                right=False,
+                            ).item()
+                        )
+                        payload_length = max(0, payload_end - payload_start)
+                        entry["payload_offset"] = payload_start
+                        entry["payload_length"] = payload_length
+                        if payload_length <= 0:
+                            continue
+
+                        mask_slice = current_mask[local_start:local_slice_end]
+                        local_selected_values = entry["corrected_local"][mask_slice]
+                        if int(local_selected_values.numel()) != payload_length:
+                            raise RuntimeError(
+                                "Top-k dist-opt payload packing mismatch: local selected count "
+                                "changed between mask sync and payload pack."
+                            )
+                        packed_payload[payload_start:payload_end].copy_(local_selected_values)
+
+                    t_payload = self._profile_tic(packed_payload)
+                    if use_fp8_quantized_payload:
+                        synced_payload_flat, quant_error_flat = self._fp8_quantized_allreduce_packed(
+                            packed_payload,
+                            group,
+                            train_iter=int(train_iter),
+                            profile_key_prefix='distopt.sparse.buffer.fp8',
+                        )
+                    else:
+                        synced_payload_flat = packed_payload
+                        self._allreduce_average_(
+                            synced_payload_flat,
+                            group,
+                            profile_key='distopt.sparse.buffer.payload_fp32',
+                        )
+                    self._profile_toc(
+                        'distopt.sparse.buffer.payload_total_ms',
+                        t_payload,
+                        packed_payload,
+                    )
+
+                for entry in local_entries:
+                    param = entry["param"]
+                    local_start = int(entry["local_start"])
+                    local_slice_end = int(entry["local_slice_end"])
+                    beta1 = float(entry["beta1"])
+                    exp_avg_prev = entry["exp_avg_prev"]
+                    corrected_local = entry["corrected_local"]
+                    residual_slice = entry["residual_slice"]
+                    grad_slice = entry["grad_slice"]
+
+                    local_numel = int(local_slice_end - local_start)
+                    mask_slice = current_mask[local_start:local_slice_end]
+                    selected_count = int(mask_slice.sum().item())
+                    total_selected += selected_count
+                    total_numel += local_numel
+
+                    residual_slice.copy_(corrected_local)
+                    if selected_count > 0:
+                        residual_slice.masked_fill_(mask_slice, 0.0)
+
+                    synced_momentum = torch.zeros_like(corrected_local)
+                    payload_length = int(entry.get("payload_length", 0))
+                    if payload_length > 0:
+                        if synced_payload_flat is None:
+                            raise RuntimeError(
+                                "Internal error: dist-opt sparse payload all-reduce output is missing."
+                            )
+                        payload_start = int(entry.get("payload_offset", 0))
+                        payload_end = payload_start + payload_length
+                        selected_idx = torch.nonzero(mask_slice, as_tuple=False).flatten()
+                        if int(selected_idx.numel()) != payload_length:
+                            raise RuntimeError(
+                                "Top-k dist-opt payload unpack mismatch: selected count changed "
+                                "between pack and unpack passes."
+                            )
+                        synced_selected = synced_payload_flat[payload_start:payload_end]
+                        synced_momentum.index_copy_(0, selected_idx, synced_selected)
+                        if quant_error_flat is not None:
+                            residual_selected = residual_slice.index_select(0, selected_idx)
+                            residual_selected.add_(quant_error_flat[payload_start:payload_end])
+                            residual_slice.index_copy_(0, selected_idx, residual_selected)
+
+                    if abs(1.0 - beta1) < 1e-12:
+                        synced_grad = torch.zeros_like(synced_momentum)
+                    else:
+                        synced_grad = (synced_momentum - exp_avg_prev * beta1) / (1.0 - beta1)
+                    grad_slice.copy_(synced_grad.to(grad_slice.dtype))
+
+                    if move_clip_grad_to_reducer and local_numel > 0:
+                        local_grad_slices.append(grad_slice)
+                    if synced_grad_sq_sum is None:
+                        synced_grad_sq_sum = torch.zeros(
+                            (), dtype=torch.float64, device=synced_grad.device
+                        )
+                    if param_is_not_shared(
+                        param
+                    ) and tensor_parallel.param_is_not_tensor_parallel_duplicate(param):
+                        synced_grad_sq_sum.add_(synced_grad.to(torch.float64).pow(2).sum())
+
+            reduced_synced_grad_sq_sum: Optional[torch.Tensor] = None
+            if synced_grad_sq_sum is not None:
+                reduced_synced_grad_sq_sum = synced_grad_sq_sum.clone()
+                if (
+                    self._grad_stats_parallel_group is not None
+                    and torch.distributed.is_available()
+                    and torch.distributed.is_initialized()
+                    and self._group_size(self._grad_stats_parallel_group) > 1
+                ):
+                    t_gradnorm_ar = self._profile_tic(reduced_synced_grad_sq_sum)
+                    torch.distributed.all_reduce(
+                        reduced_synced_grad_sq_sum,
+                        op=torch.distributed.ReduceOp.SUM,
+                        group=self._grad_stats_parallel_group,
+                    )
+                    self._profile_toc(
+                        'clip.grad_stats_allreduce_ms',
+                        t_gradnorm_ar,
+                        reduced_synced_grad_sq_sum,
+                    )
+
+            if move_clip_grad_to_reducer and local_grad_slices:
+                clip_coeff = 1.0
+                if (
+                    self._clip_grad_max_norm > 0.0
+                    and reduced_synced_grad_sq_sum is not None
+                    and float(reduced_synced_grad_sq_sum.item()) > 0.0
+                ):
+                    synced_grad_norm = float(
+                        torch.sqrt(torch.clamp_min(reduced_synced_grad_sq_sum, 0.0)).item()
+                    )
+                    clip_coeff = self._clip_grad_max_norm / (synced_grad_norm + 1.0e-6)
+                if clip_coeff < 1.0:
+                    for grad_slice in local_grad_slices:
+                        grad_slice.mul_(clip_coeff)
+
+            if synced_grad_sq_sum is None:
+                self._last_synced_grad_norm = 0.0
+            elif reduced_synced_grad_sq_sum is not None:
+                self._last_synced_grad_norm = float(
+                    torch.sqrt(torch.clamp_min(reduced_synced_grad_sq_sum, 0.0)).item()
+                )
+            else:
+                self._last_synced_grad_norm = float(
+                    torch.sqrt(torch.clamp_min(synced_grad_sq_sum, 0.0)).item()
+                )
+            self._last_update_metric_norm = 0.0
+            self._last_norm_step = int(train_iter)
+
+            is_rank0 = (not torch.distributed.is_initialized()) or torch.distributed.get_rank() == 0
+            if total_numel > 0 and is_rank0:
+                logger.info(
+                    "%s step=%d density=%f selected=%d total=%d",
+                    self.__class__.__name__,
+                    int(train_iter),
+                    float(total_selected) / float(total_numel),
+                    total_selected,
+                    total_numel,
+                )
+
+            self._profile_toc('reduce.total_ms', reduce_t0)
+            self._log_profile_step(
+                train_iter=int(train_iter),
+                current_density=float(current_density),
+                next_density=float(next_density),
+                dense_mode=bool(dense_mode),
+                use_fp8_quantized_payload=bool(use_fp8_quantized_payload),
+                total_selected=int(total_selected),
+                total_numel=int(total_numel),
+            )
+            return
 
         for buffer_idx, buffer in enumerate(self._buffers):
             grad_data = buffer.grad_data

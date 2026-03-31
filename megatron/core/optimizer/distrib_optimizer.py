@@ -2637,15 +2637,22 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
         if timers is not None:
             timers('params-all-gather', log_level=1).start(barrier=self.config.barrier_with_L1_time)
 
+        sparse_param_sync_done = False
+        for model_chunk in self.model_chunks:
+            sparse_sync_fn = getattr(model_chunk, 'sync_topk_sparse_params_from_local_shards', None)
+            if callable(sparse_sync_fn):
+                sparse_param_sync_done = bool(sparse_sync_fn()) or sparse_param_sync_done
+
         if self.ddp_config.use_megatron_fsdp:
-            for model_chunk in self.model_chunks:
-                model_chunk.start_param_sync()
+            if not sparse_param_sync_done:
+                for model_chunk in self.model_chunks:
+                    model_chunk.start_param_sync()
         else:
             # If not overlapping all-gather for parameters, launch synchronous all-gather
             # communication calls here. If overlapping all-gather for parameters, the following
             # the first all-gather is launched asynchronously in the next optimizer.zero_grad()
             # call and subsequent all-gathers are launched in the forward pre-hook.
-            if not self.ddp_config.overlap_param_gather:
+            if (not self.ddp_config.overlap_param_gather) and (not sparse_param_sync_done):
                 for model_chunk in self.model_chunks:
                     model_chunk.start_param_sync()
         if timers is not None:

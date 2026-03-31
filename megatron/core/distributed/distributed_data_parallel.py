@@ -503,6 +503,11 @@ class DistributedDataParallel(_BaseDataParallel):
                 other settings.
             force_dispatch (bool, optional): force dispatch regardless of other settings.
         """
+        if self.topk_adams_reducer is not None:
+            can_replace_fn = getattr(self.topk_adams_reducer, 'can_replace_dense_param_all_gather', None)
+            if callable(can_replace_fn) and bool(can_replace_fn()):
+                return
+
         if not force_sync:
             # If overlapping param AG with optimizer step, AG should not be dispatched again
             # in forward_backward_step.
@@ -572,6 +577,7 @@ class DistributedDataParallel(_BaseDataParallel):
         communication ops.
         """
         if self.topk_adams_reducer is not None:
+            # Top-k AdamS reducer runs its own communication and gradient synthesis.
             train_iter = getattr(self, "_topk_reducer_train_iter", 0)
             self.topk_adams_reducer.reduce(
                 train_iter=train_iter,
@@ -622,6 +628,15 @@ class DistributedDataParallel(_BaseDataParallel):
         if not callable(get_norm_fn):
             return None
         return get_norm_fn()
+
+    def sync_topk_sparse_params_from_local_shards(self) -> bool:
+        """Sync only sparse updated params and materialize full local params when supported."""
+        if self.topk_adams_reducer is None:
+            return False
+        sync_fn = getattr(self.topk_adams_reducer, 'sync_sparse_params_from_local_shards', None)
+        if not callable(sync_fn):
+            return False
+        return bool(sync_fn())
 
     def free_overlap_buffers(self):
         """Free overlap param-gather GPU buffers across all bucket groups."""

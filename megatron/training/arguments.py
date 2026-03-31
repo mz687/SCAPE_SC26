@@ -907,8 +907,6 @@ def validate_args(args, defaults={}):
             '--use-topk-adams-reducer requires --optimizer adams'
         assert not args.overlap_grad_reduce, \
             '--use-topk-adams-reducer does not support --overlap-grad-reduce'
-        assert not args.use_distributed_optimizer, \
-            '--use-topk-adams-reducer does not support --use-distributed-optimizer'
         assert not args.use_torch_fsdp2 and not args.use_megatron_fsdp, \
             '--use-topk-adams-reducer is supported only on standard MCore DDP path'
         assert 0.0 < args.topk_adams_density <= 1.0, \
@@ -923,6 +921,13 @@ def validate_args(args, defaults={}):
             '--topk-adams-density-cooldown-steps must be >= 0'
         assert args.topk_adams_density_cooldown_start_step >= -1, \
             '--topk-adams-density-cooldown-start-step must be >= -1'
+    if args.topk_adams_full_param_cpu_offload:
+        assert args.use_topk_adams_reducer, \
+            '--topk-adams-full-param-cpu-offload requires --use-topk-adams-reducer'
+        assert args.use_distributed_optimizer, \
+            '--topk-adams-full-param-cpu-offload requires --use-distributed-optimizer'
+        assert not args.overlap_param_gather, \
+            '--topk-adams-full-param-cpu-offload requires --overlap-param-gather disabled'
     if args.move_clip_grad_to_reducer:
         assert args.use_topk_adams_reducer, \
             '--move-clip-grad-to-reducer requires --use-topk-adams-reducer'
@@ -2741,6 +2746,8 @@ def _add_distributed_args(parser):
                        help='If set, perform global grad clipping inside top-k reducer on raw synced gradients.')
     group.add_argument('--use-fp8-topk-quant', action='store_true', default=False,
                        help='Quantize sparse top-k payloads to FP8 before synchronization.')
+    group.add_argument('--topk-adams-full-param-cpu-offload', action='store_true', default=False,
+                       help='Offload full FP32 parameter replica used by top-k sparse param sync to CPU.')
     group.add_argument('--use-topk-mask-overlap-tracker', action='store_true', default=False,
                        help='Record per-parameter top-k mask overlap on AdamS momentum derived from synchronized DDP gradients.')
     group.add_argument('--topk-mask-overlap-density', type=float, default=0.01,

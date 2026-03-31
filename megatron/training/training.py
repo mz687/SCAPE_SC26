@@ -1532,9 +1532,13 @@ def get_megatron_optimizer_config(args: Any) -> OptimizerConfig:
     #  can be added to as needed by the user, or replaced entirely with a custom override.
     config_overrides = get_standard_config_overrides(config=config)
 
-    # Top-K AdamS reducer writes AdamS metrics directly into grad buffers.
-    # The wrapped optimizer must therefore be plain SGD with no momentum/weight-decay.
-    if getattr(args, "use_topk_adams_reducer", False):
+    # Top-K AdamS reducer on the legacy non-dist-opt path writes AdamS update metrics
+    # directly into grad buffers, so the wrapped optimizer must be plain SGD.
+    # With distributed optimizer enabled, keep AdamS as the wrapped optimizer and let
+    # the reducer write sparse synced gradients into dist-opt shards instead.
+    if getattr(args, "use_topk_adams_reducer", False) and not getattr(
+        args, "use_distributed_optimizer", False
+    ):
         config.optimizer = 'sgd'
         config.sgd_momentum = 0.0
         config.weight_decay = 0.0

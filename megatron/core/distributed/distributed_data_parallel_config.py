@@ -221,6 +221,9 @@ class DistributedDataParallelConfig:
     use_fp8_topk_quant: bool = False
     """If true, use FP8 quantized sparse payloads in Top-K AdamS reducer."""
 
+    topk_adams_full_param_cpu_offload: bool = False
+    """If true, offload Top-K reducer full FP32 param replica to CPU between steps."""
+
     use_topk_mask_overlap_tracker: bool = False
     """If true, record per-parameter top-k mask overlap on AdamS momentum."""
 
@@ -252,10 +255,6 @@ class DistributedDataParallelConfig:
                     "Top-K AdamS reducer does not support overlap_grad_reduce. "
                     "Disable --overlap-grad-reduce."
                 )
-            if self.use_distributed_optimizer:
-                raise ValueError(
-                    "Top-K AdamS reducer does not support distributed optimizer."
-                )
             if not (0.0 < self.topk_adams_density <= 1.0):
                 raise ValueError(
                     f"topk_adams_density must be in (0, 1], got {self.topk_adams_density}."
@@ -284,9 +283,22 @@ class DistributedDataParallelConfig:
                 raise ValueError(
                     f"topk_adams_start_iter must be >= 0, got {self.topk_adams_start_iter}."
                 )
+            if self.topk_adams_full_param_cpu_offload and self.overlap_param_gather:
+                raise ValueError(
+                    "topk_adams_full_param_cpu_offload requires overlap_param_gather=False "
+                    "because sparse param sync replaces dense param all-gather."
+                )
+            if self.topk_adams_full_param_cpu_offload and (not self.use_distributed_optimizer):
+                raise ValueError(
+                    "topk_adams_full_param_cpu_offload requires use_distributed_optimizer=True."
+                )
         elif self.move_clip_grad_to_reducer:
             raise ValueError(
                 "move_clip_grad_to_reducer requires use_topk_adams_reducer."
+            )
+        elif self.topk_adams_full_param_cpu_offload:
+            raise ValueError(
+                "topk_adams_full_param_cpu_offload requires use_topk_adams_reducer."
             )
 
         if self.use_topk_mask_overlap_tracker:
