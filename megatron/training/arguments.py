@@ -928,6 +928,9 @@ def validate_args(args, defaults={}):
             '--topk-adams-full-param-cpu-offload requires --use-distributed-optimizer'
         assert not args.overlap_param_gather, \
             '--topk-adams-full-param-cpu-offload requires --overlap-param-gather disabled'
+    if args.topk_adams_residual_cpu_offload:
+        assert args.use_topk_adams_reducer, \
+            '--topk-adams-residual-cpu-offload requires --use-topk-adams-reducer'
     if args.move_clip_grad_to_reducer:
         assert args.use_topk_adams_reducer, \
             '--move-clip-grad-to-reducer requires --use-topk-adams-reducer'
@@ -2748,6 +2751,8 @@ def _add_distributed_args(parser):
                        help='Quantize sparse top-k payloads to FP8 before synchronization.')
     group.add_argument('--topk-adams-full-param-cpu-offload', action='store_true', default=False,
                        help='Offload full FP32 parameter replica used by top-k sparse param sync to CPU.')
+    group.add_argument('--topk-adams-residual-cpu-offload', action='store_true', default=False,
+                       help='Offload top-k reducer residual (error-feedback) buffers to CPU using layer-staged GPU double buffering.')
     group.add_argument('--use-topk-mask-overlap-tracker', action='store_true', default=False,
                        help='Record per-parameter top-k mask overlap on AdamS momentum derived from synchronized DDP gradients.')
     group.add_argument('--topk-mask-overlap-density', type=float, default=0.01,

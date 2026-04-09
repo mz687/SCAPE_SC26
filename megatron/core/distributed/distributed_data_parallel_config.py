@@ -224,6 +224,9 @@ class DistributedDataParallelConfig:
     topk_adams_full_param_cpu_offload: bool = False
     """If true, offload Top-K reducer full FP32 param replica to CPU between steps."""
 
+    topk_adams_residual_cpu_offload: bool = False
+    """If true, offload Top-K reducer residual (error-feedback) buffers to CPU with layer-staged GPU buffers."""
+
     use_topk_mask_overlap_tracker: bool = False
     """If true, record per-parameter top-k mask overlap on AdamS momentum."""
 
@@ -299,6 +302,10 @@ class DistributedDataParallelConfig:
         elif self.topk_adams_full_param_cpu_offload:
             raise ValueError(
                 "topk_adams_full_param_cpu_offload requires use_topk_adams_reducer."
+            )
+        elif self.topk_adams_residual_cpu_offload:
+            raise ValueError(
+                "topk_adams_residual_cpu_offload requires use_topk_adams_reducer."
             )
 
         if self.use_topk_mask_overlap_tracker:
