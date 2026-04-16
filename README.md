@@ -1,175 +1,372 @@
-<div align="center">
+# SCAPE_SC26_ADAE
 
-# NOTE this Megatron-LM is used for TBD (currently called SCAPE) project to pre-train llama2-500M model with AdamS optimizer. Here are the details of the model and dataset
-- Model: H2O-500M
-- Dataset: SlimPajama-6B
-- hyperparameters
-  - pre-train dataset: slimpajama-6B
-  -  global batch size: 1024
-  -  sequence length: 4096 tokens
-  -  number of steps: 10,000
-  -  lr warmup steps (3%): 300
-  -  peak lr: 3e-4
-  -  min lr: 3e-5
-  -  betas: (0.9, 0.95)
-  -  lr scheduler: consine
-  -  Megatron-LM and Megatron Core
-=============================
+`SCAPE_SC26_ADAE` is the SC26 AD/AE artifact repo for SCAPE. It is a Megatron-LM fork with sparse AdamS communication, density scheduling, CPU offload variants, and checked-in Slurm launchers for the current VISTA experiments.
 
-<h4>GPU-optimized library for training transformer models at scale</h4>
+## Artifact Scope
 
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://docs.nvidia.com/megatron-core/developer-guide/latest/index.html)
-[![version](https://img.shields.io/badge/release-0.15.0-green)](./CHANGELOG.md)
-[![license](https://img.shields.io/badge/license-Apache-blue)](./LICENSE)
+This checkout still contains the usual Megatron-LM codebase, but the artifact is centered on:
 
-<div align="left">
+- `pretrain_gpt.py`: the training entrypoint used by the checked-in launchers
+- `slurm_scripts/vista/`: baseline, SCAPE, scaling, and memory-study launchers
+- `tools/`: current data-prep, checkpoint-conversion, evaluation, and log-summary helpers
+- `megatron/`: the SCAPE and distributed-training implementation
 
-## About
+The rest of the repository, including `docs/`, `examples/`, `scripts/`, and `tests/`, is mostly upstream/reference material from the fork.
 
-This repository contains two components: **Megatron-LM** and **Megatron Core**.
+## Current Repository Layout
 
-**Megatron-LM** is a reference example that includes Megatron Core plus pre-configured training scripts. Best for research teams, learning distributed training, and quick experimentation.
+Top-level paths that matter most for the artifact:
 
-**Megatron Core** is a composable library with GPU-optimized building blocks for custom training frameworks. It provides transformer building blocks, advanced parallelism strategies (TP, PP, DP, EP, CP), mixed precision support (FP16, BF16, FP8, FP4), and model architectures. Best for framework developers and ML engineers building custom training pipelines.
+- `pretrain_gpt.py`
+- `megatron/`
+- `slurm_scripts/`
+- `tools/`
+- `README.md`
 
-**[Megatron Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)** provides bidirectional Hugging Face ↔ Megatron checkpoint conversion with production-ready recipes.
+Current `slurm_scripts/vista/` layout:
 
-## Getting Started
+```text
+slurm_scripts/vista/
+  baseline/
+    AdamS/
+      gpt-345M/
+      llama-H2O-500M/
+    AdamW/
+      gpt-345M/
+      llama-H2O-500M/
+  scape/
+    gpt-345M/
+      d_0.01/
+      d_0.1/
+    llama-500M/
+      d_0.01/
+      d_0.1/
+  scaling_efficiency/
+    AdamS/
+      500M_micro_bs_8/
+        comp_comm_breakdown/
+        dist-optm-comp_comm_breakdown/
+      1.8B_micro_bs_8/
+        comp_comm_breakdown/
+        dist-optm-comp_comm_breakdown/
+    SCAPE/
+      d_0.01/
+        no_distributed_optimizer/
+        use_distributed_optimizer/
+      d_0.1/
+        no_distributed_optimizer/
+        use_distributed_optimizer/
+    SCAPE_cpu_offload/
+      d_0.01/
+        use_distributed_optimizer/
+      d_0.1/
+        use_distributed_optimizer/
+  memory_usage_micro_bs_8/
+    AdamS_baseline/
+      500M/
+      1.8B/
+    AdamS_baseline_dist-optm/
+      500M/
+      1.8B/
+    SCAPE_d_0.1_no_residual_offload/
+      500M/
+      1.8B/
+    SCAPE_d_0.1_residual_offload/
+      500M/
+      1.8B/
+    SCAPE_d_0.1_dist-optm_no_residual_model_offload/
+      500M/
+      1.8B/
+    SCAPE_d_0.1_dist-optm_residual_model_offload/
+      500M/
+      1.8B/
+```
 
-**Install from PyPI:**
+Important layout notes:
+
+- The current tree uses `SCAPE_cpu_offload`, not `SCAPE_cpu_offloadv2`.
+- The current tree includes `slurm_scripts/vista/scape/`; it does not use the older `reducers/` or `gpt/reducers/` layout from earlier notes.
+- Selected directories also contain generated `.out`, `.err`, `.txt`, and cache files. Treat the checked-in `.sh` and `.slurm` launchers as the source of truth.
+
+## Current Launcher Families
+
+Dense baselines:
+
+- `slurm_scripts/vista/baseline/AdamS/gpt-345M/`
+- `slurm_scripts/vista/baseline/AdamW/gpt-345M/`
+- `slurm_scripts/vista/baseline/AdamS/llama-H2O-500M/`
+- `slurm_scripts/vista/baseline/AdamW/llama-H2O-500M/`
+
+Sparse SCAPE launchers:
+
+- `slurm_scripts/vista/scape/gpt-345M/d_0.01/`
+- `slurm_scripts/vista/scape/gpt-345M/d_0.1/`
+- `slurm_scripts/vista/scape/llama-500M/d_0.01/`
+- `slurm_scripts/vista/scape/llama-500M/d_0.1/`
+
+Scaling-efficiency studies:
+
+- dense AdamS launchers for `500M_micro_bs_8` and `1.8B_micro_bs_8`
+- sparse SCAPE launchers for `d_0.01` and `d_0.1`
+- distributed-optimizer and non-distributed-optimizer branches under SCAPE
+- selected `64gpus/` and `128gpus/` `.slurm` wrappers for fixed-scale runs
+- CPU-offload scaling launchers under `slurm_scripts/vista/scaling_efficiency/SCAPE_cpu_offload/`
+
+Memory studies:
+
+- dense AdamS baseline
+- dense AdamS baseline with distributed optimizer
+- SCAPE without residual offload
+- SCAPE with residual offload
+- SCAPE with distributed optimizer and full-model offload
+- SCAPE with distributed optimizer and residual-model offload
+
+## Running the Current Launchers
+
+The checked-in launchers now invoke `pretrain_gpt.py` from the current working directory. Run them from the repository root.
+
+Example shell launcher usage:
 
 ```bash
-uv pip install megatron-core
+cd /path/to/SCAPE_SC26_ADAE
+bash ./slurm_scripts/vista/baseline/AdamW/gpt-345M/pretrain_gpt_345M.sh
 ```
 
-**Or clone and install from source:**
+Another example:
 
 ```bash
-git clone https://github.com/NVIDIA/Megatron-LM.git
-cd Megatron-LM
-uv pip install -e .
+cd /path/to/SCAPE_SC26_ADAE
+bash ./slurm_scripts/vista/scape/llama-500M/d_0.1/scape_llama_500M.sh
 ```
 
-> **Note:** Building from source can use a lot of memory. If the build runs out of memory, limit parallel compilation jobs by setting `MAX_JOBS` (e.g. `MAX_JOBS=4 uv pip install -e .`).
+Important execution behavior:
 
-For NGC container setup and all installation options, see the **[Installation Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/get-started/install.html)**.
+- `.sh` launchers expect to run inside an active Slurm allocation
+- if `SLURM_JOB_ID` is missing, those scripts exit immediately
+- once inside an allocation, the `.sh` launchers typically self-launch one worker task per node with `srun`
+- `.slurm` launchers are direct `sbatch` entrypoints
 
-- **[Your First Training Run](https://docs.nvidia.com/megatron-core/developer-guide/latest/get-started/quickstart.html)** - End-to-end training examples with data preparation
-- **[Parallelism Strategies](https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/parallelism-guide.html)** - Scale training across GPUs with TP, PP, DP, EP, and CP
-- **[Contribution Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/developer/contribute.html)** - How to contribute to Megatron Core
+A typical shell-launcher workflow is:
 
-# Latest News
-
-- **[2026/03]** **Deprecating Python 3.10 support:** We're officially dropping Python 3.10 support with the upcoming 0.17.0 release. Downstream applications must raise their lower boundary to 3.12 to stay compatible with MCore.
-- **[2026/01]** **[Dynamic Context Parallelism](https://developer.nvidia.com/blog/speeding-up-variable-length-training-with-dynamic-context-parallelism-and-nvidia-megatron-core/)** - Up to 1.48x speedup for variable-length sequence training with adaptive CP sizing.
-- **[2025/12]** **Megatron Core development has moved to GitHub!** All development and CI now happens in the open. We welcome community contributions.
-- **[2025/10]** **[Megatron Dev Branch](https://github.com/NVIDIA/Megatron-LM/tree/dev)** - early access branch with experimental features.
-- **[2025/10]** **[Megatron Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)** - Bidirectional converter for interoperability between Hugging Face and Megatron checkpoints, featuring production-ready recipes for popular models.
-- **[2025/08]** **[MoE Q3-Q4 2025 Roadmap](https://github.com/NVIDIA/Megatron-LM/issues/1729)** - Comprehensive roadmap for MoE features including DeepSeek-V3, Qwen3, advanced parallelism strategies, FP8 optimizations, and Blackwell performance enhancements.
-- **[2025/08]** **[GPT-OSS Model](https://github.com/NVIDIA/Megatron-LM/issues/1739)** - Advanced features including YaRN RoPE scaling, attention sinks, and custom activation functions are being integrated into Megatron Core.
-- **[2025/06]** **[Megatron MoE Model Zoo](https://github.com/yanring/Megatron-MoE-ModelZoo)** - Best practices and optimized configurations for training DeepSeek-V3, Mixtral, and Qwen3 MoE models with performance benchmarking and checkpoint conversion tools.
-- **[2025/05]** Megatron Core v0.11.0 brings new capabilities for multi-data center LLM training ([blog](https://developer.nvidia.com/blog/turbocharge-llm-training-across-long-haul-data-center-networks-with-nvidia-nemo-framework/)).
-
-<details>
-<summary>Previous News</summary>
-
-- **[2024/07]** Megatron Core v0.7 improves scalability and training resiliency and adds support for multimodal training ([blog](https://developer.nvidia.com/blog/train-generative-ai-models-more-efficiently-with-new-nvidia-Megatron-Core-functionalities/)).
-- **[2024/06]** Megatron Core added supports for Mamba-based models. Check out our paper [An Empirical Study of Mamba-based Language Models](https://arxiv.org/pdf/2406.07887) and [code example](https://github.com/NVIDIA/Megatron-LM/tree/ssm/examples/mamba).
-- **[2024/01 Announcement]** NVIDIA has released the core capabilities in **Megatron-LM** into [**Megatron Core**](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) in this repository. Megatron Core expands upon Megatron-LM's GPU-optimized techniques with more cutting-edge innovations on system-level optimizations, featuring composable and modular APIs.
-
-</details>
-
-# Project Structure
-
-```
-Megatron-LM/
-├── megatron/
-│   ├── core/                    # Megatron Core (kernels, parallelism, building blocks)
-│   │   ├── models/              # Transformer models
-│   │   ├── transformer/         # Transformer building blocks
-│   │   ├── tensor_parallel/     # Tensor parallelism
-│   │   ├── pipeline_parallel/   # Pipeline parallelism
-│   │   ├── distributed/         # Distributed training (FSDP, DDP)
-│   │   ├── optimizer/           # Optimizers
-│   │   ├── datasets/            # Dataset loaders
-│   │   ├── inference/           # Inference engines and server
-│   │   └── export/              # Model export (e.g. TensorRT-LLM)
-│   ├── training/                # Training scripts
-│   ├── legacy/                  # Legacy components
-│   ├── post_training/           # Post-training (quantization, distillation, pruning, etc.)
-│   └── rl/                      # Reinforcement learning (RLHF, etc.)
-├── examples/                    # Ready-to-use training examples
-├── tools/                       # Utility tools
-├── tests/                       # Comprehensive test suite
-└── docs/                        # Documentation
+```bash
+cd /path/to/SCAPE_SC26_ADAE
+salloc -A <account> -p <partition> -N 4 -t 02:00:00
+bash ./slurm_scripts/vista/scape/llama-500M/d_0.1/scape_llama_500M.sh
 ```
 
-# Performance Benchmarking
+A typical `.slurm` workflow is:
 
-For our latest performance benchmarking results, please refer to [NVIDIA Megatron Bridge Performance Summary](https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-summary.html).
-
-Our codebase efficiently trains models from 2B to 462B parameters across thousands of GPUs, achieving up to **47% Model FLOP Utilization (MFU)** on H100 clusters.
-
-![Model table](images/model_table.png)
-
-**Benchmark Configuration:**
-
-- **Vocabulary size**: 131,072 tokens
-- **Sequence length**: 4096 tokens
-- **Model scaling**: Varied hidden size, attention heads, and layers to achieve target parameter counts
-- **Communication optimizations**: Fine-grained overlapping with DP (`--overlap-grad-reduce`, `--overlap-param-gather`), TP (`--tp-comm-overlap`), and PP (enabled by default)
-
-**Key Results:**
-
-- **6144 H100 GPUs**: Successfully benchmarked 462B parameter model training
-- **Superlinear scaling**: MFU increases from 41% to 47-48% with model size
-- **End-to-end measurement**: Throughputs include all operations (data loading, optimizer steps, communication, logging)
-- **Production ready**: Full training pipeline with checkpointing and fault tolerance
-- *Note: Performance results measured without training to convergence*
-
-## Weak Scaling Results
-
-Our weak scaled results show superlinear scaling (MFU increases from 41% for the smallest model considered to 47-48% for the largest models); this is because larger GEMMs have higher arithmetic intensity and are consequently more efficient to execute.
-
-![Weak scaling](images/weak_scaling.png)
-
-## Strong Scaling Results
-
-We also strong scaled the standard GPT-3 model (our version has slightly more than 175 billion parameters due to larger vocabulary size) from 96 H100 GPUs to 4608 GPUs, using the same batch size of 1152 sequences throughout. Communication becomes more exposed at larger scale, leading to a reduction in MFU from 47% to 42%.
-
-![Strong scaling](images/strong_scaling.png)
-
-# Roadmaps
-
-- **[MoE Roadmap](https://github.com/NVIDIA/Megatron-LM/issues/1729)** - DeepSeek-V3, Qwen3, advanced parallelism, FP8 optimizations, and Blackwell enhancements
-
-# Resources
-
-## Getting Help
-
-- 📖 **[Documentation](https://docs.nvidia.com/megatron-core/developer-guide/latest/index.html)** - Official documentation
-- 🐛 **[Issues](https://github.com/NVIDIA/Megatron-LM/issues)** - Bug reports and feature requests
-
-## Contributing
-
-We ❤️ contributions! Ways to contribute:
-
-- 🐛 **Report bugs** - Help us improve reliability
-- 💡 **Suggest features** - Shape the future of Megatron Core
-- 📝 **Improve docs** - Make Megatron Core more accessible
-- 🔧 **Submit PRs** - Contribute code improvements
-
-**→ [Contributing Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/developer/contribute.html)**
-
-## Citation
-
-If you use Megatron in your research or project, we appreciate that you use the following citations:
-
-```bibtex
-@article{megatron-lm,
-  title={Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism},
-  author={Shoeybi, Mohammad and Patwary, Mostofa and Puri, Raul and LeGresley, Patrick and Casper, Jared and Catanzaro, Bryan},
-  journal={arXiv preprint arXiv:1909.08053},
-  year={2019}
-}
+```bash
+cd /path/to/SCAPE_SC26_ADAE
+sbatch ./slurm_scripts/vista/memory_usage_micro_bs_8/SCAPE_d_0.1_dist-optm_no_residual_model_offload/1.3B/scape_llama2_1.3B_baseline.slurm
 ```
+
+## Required Edits Before Launching
+
+Most checked-in launchers are templates and still contain placeholders. Before running them, replace or export the following values.
+
+| Item | Where it is used | What to provide |
+| --- | --- | --- |
+| `YOUR_ACCOUNT` | `#SBATCH -A ...`, `salloc`, `srun` | Your Slurm allocation/account |
+| `YOUR_PARTITION` | `#SBATCH -p ...`, `salloc`, `srun` | Your Slurm partition/queue |
+| `YOUR_EMAIL_ADDRESS` | `#SBATCH --mail-user=...` | Your email for job notifications |
+| `/path/to/repo` | `CONTAINER_CMD` | Absolute path to this checkout |
+| `/path/to/data` | `CONTAINER_CMD`, `DATA_PATH` | Host path containing preprocessed data |
+| `/path/to/ckpts` | `CONTAINER_CMD`, `CHECKPOINT_PATH` | Writable checkpoint/output path |
+| `/path/to/pytorch_26.01-py3.sif` | `CONTAINER_CMD` | Apptainer image based on `nvcr.io/nvidia/pytorch:26.01-py3` |
+| `HF_TOKEN` or `HF_TOKEN_FILE` | Llama tokenizer access | Hugging Face access token for gated assets when needed |
+| `WANDB_API_KEY` or `WANDB_API_KEY_FILE` | Optional logging | Needed only if you want W&B logging |
+| `GPT2_VOCAB_FILE`, `GPT2_MERGE_FILE` | GPT-345M launchers | GPT-2 vocab and merges files |
+
+Common environment variables used by the current launchers:
+
+- `DATA_PATH`
+- `CHECKPOINT_PATH`
+- `TOKENIZER_MODEL`
+- `HF_TOKEN`
+- `HF_TOKEN_FILE`
+- `WANDB_API_KEY`
+- `WANDB_API_KEY_FILE`
+- `GPT2_VOCAB_FILE`
+- `GPT2_MERGE_FILE`
+
+Important portability note:
+
+- run shell launchers from the repository root with `bash ./slurm_scripts/...`
+- the repository path used in `CONTAINER_CMD` must match the real checkout path
+- that same path must be bind-mounted into the container so `pretrain_gpt.py` is still visible from the current working directory inside Apptainer
+
+## Container Setup
+
+The launchers currently use a placeholder command of the form:
+
+```bash
+CONTAINER_CMD="apptainer exec --nv --bind /path/to/repo --bind /path/to/data --bind /path/to/ckpts --fakeroot /path/to/pytorch_26.01-py3.sif"
+```
+
+A typical setup looks like:
+
+```bash
+export REPO_ROOT=/path/to/SCAPE_SC26_ADAE
+export DATA_ROOT=/path/to/data
+export CKPT_ROOT=/path/to/ckpts
+export CONTAINER=/path/to/pytorch_26.01-py3.sif
+
+ml tacc-apptainer
+apptainer exec --nv \
+  --bind ${REPO_ROOT}:${REPO_ROOT} \
+  --bind ${DATA_ROOT}:${DATA_ROOT} \
+  --bind ${CKPT_ROOT}:${CKPT_ROOT} \
+  --fakeroot \
+  ${CONTAINER} \
+  bash
+```
+
+If needed, pull the base image first:
+
+```bash
+apptainer pull /path/to/pytorch_26.01-py3.sif docker://nvcr.io/nvidia/pytorch:26.01-py3
+```
+
+Credential examples:
+
+```bash
+echo <huggingface_token> > $HOME/hf_token
+echo <wandb_api_key> > $HOME/wandb_key
+```
+
+## SlimPajama-6B Download and Preprocessing
+
+The current Llama launchers expect a Megatron preprocessed dataset prefix such as:
+
+- `${OUTPUT_PREFIX}_text_document.bin`
+- `${OUTPUT_PREFIX}_text_document.idx`
+
+For Llama runs, `DATA_PATH` should point at the shared prefix without the suffix, for example:
+
+```bash
+DATA_PATH=/path/to/processed/slimpajama/slimpajama6b_llama2_text_document
+```
+
+Current checked-in helpers for this workflow:
+
+- `tools/download_slimpajama_6b.py`
+- `tools/run_prepare_slimpajama_6b.sh`
+- `tools/preprocess_data.py`
+
+`tools/run_prepare_slimpajama_6b.sh` currently honors these variables:
+
+- `RAW_DIR`
+- `RAW_JSONL`
+- `OUTPUT_PREFIX`
+- `TOKENIZER_MODEL`
+- `WORKERS`
+- `PYTHON_BIN`
+- `VENV_ACTIVATE`
+
+Example preprocessing workflow:
+
+```bash
+cd /path/to/SCAPE_SC26_ADAE
+export RAW_DIR=/path/to/raw/slimpajama6b
+export OUTPUT_PREFIX=/path/to/processed/slimpajama/slimpajama6b_llama2
+export TOKENIZER_MODEL=meta-llama/Llama-2-7b-hf
+export WORKERS=32
+bash tools/run_prepare_slimpajama_6b.sh
+```
+
+The helper prints the final dataset prefix as:
+
+```text
+DATA_PATH=${OUTPUT_PREFIX}_text_document
+```
+
+## Export to HF and Run LM Evaluation
+
+`tools/run_convert_torch_dist_to_hf.sh` converts a Megatron `torch_dist` checkpoint into a Hugging Face export by launching `examples/post_training/modelopt/export.py` inside Apptainer.
+
+Current variables used by the export script:
+
+- `CKPT_ROOT`: input `torch_dist` checkpoint root; it must contain `latest_checkpointed_iteration.txt`
+- `HF_OUT`: output HF directory; defaults to `${CKPT_ROOT}_hf`
+- `IMG`: Apptainer image path
+- `MEGATRON`: path to this `SCAPE_SC26_ADAE` checkout
+- `HF_TOKEN_FILE`: Hugging Face token file; defaults to `$HOME/hf_token`
+
+Current environment requirements for the export step:
+
+- `ml tacc-apptainer` must be available on the host
+- the checkpoint, output, and repo paths must be reachable through the script's current bind mounts
+- `HF_TOKEN_FILE` must exist before launching the export
+
+Example export workflow:
+
+```bash
+cd /path/to/SCAPE_SC26_ADAE
+export CKPT_ROOT=/path/to/torch_dist_ckpt
+export HF_OUT=${CKPT_ROOT}_hf
+export IMG=/path/to/pytorch_26.02-py3.sif
+export MEGATRON=/path/to/SCAPE_SC26_ADAE
+bash tools/run_convert_torch_dist_to_hf.sh
+```
+
+`tools/run_downstream_lm_eval.sh` runs `lm_eval` on the converted HF checkpoint.
+
+Current variables used by the evaluation script:
+
+- `HF_MODEL`: path to the converted HF checkpoint
+- `OUT_DIR`: directory for lm-eval outputs
+
+Environment requirement for downstream evaluation:
+
+- run `tools/run_downstream_lm_eval.sh` from a Python environment where the `lm_eval` command is installed and available on `PATH`
+- that environment should also include a compatible CUDA-enabled PyTorch plus the Hugging Face runtime packages used by `lm_eval`, such as `transformers` and `accelerate`
+- the script reads `HF_TOKEN` from `$HOME/hf_token`
+- the script currently uses `--device cuda:1` and `--batch_size 128`, so adjust the script or runtime environment if your machine differs
+
+Example LM-eval workflow:
+
+```bash
+source /path/to/lm-eval-venv/bin/activate
+command -v lm_eval
+cd /path/to/SCAPE_SC26_ADAE
+export HF_MODEL=/path/to/hf_ckpt
+export OUT_DIR=/path/to/lm_eval_logs
+bash tools/run_downstream_lm_eval.sh
+```
+
+## Helper Scripts
+
+Current artifact-relevant helpers include:
+
+- `tools/compute_avg_step_time.py`
+- `tools/summarize_topk_runtime.py`
+- `tools/download_slimpajama_6b.py`
+- `tools/run_prepare_slimpajama_6b.sh`
+- `tools/run_convert_torch_dist_to_hf.sh`
+- `tools/run_downstream_lm_eval.sh`
+
+Example step-time summary usage:
+
+```bash
+cd /path/to/SCAPE_SC26_ADAE
+python3 tools/compute_avg_step_time.py \
+  --paths ./slurm_scripts/vista/scape/llama-500M/d_0.1 \
+  --recursive \
+  --skip-steps 10
+```
+
+## Quick Checklist
+
+Before submitting jobs, make sure that:
+
+- you are in the repository root
+- the launcher path you use matches the current `slurm_scripts/vista/` tree above
+- placeholder account, partition, email, container, data, and checkpoint paths have been replaced
+- `DATA_PATH` points to a real preprocessed dataset prefix
+- GPT launchers have valid GPT-2 vocab and merges files
+- Llama launchers have a valid tokenizer model and token if needed
+- `.sh` launchers are run inside an active Slurm allocation
+- `.slurm` launchers are submitted with `sbatch`
+- HF export runs have valid `CKPT_ROOT`, `HF_OUT`, `IMG`, `MEGATRON`, and `HF_TOKEN_FILE` settings
+- downstream evaluation is run from an environment where `lm_eval` is installed, along with compatible `torch`, `transformers`, and `accelerate`
