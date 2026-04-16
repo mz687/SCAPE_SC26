@@ -1,6 +1,6 @@
-# SCAPE_SC26_ADAE
+# SCAPE
 
-`SCAPE_SC26_ADAE` is the SC26 AD/AE artifact repo for SCAPE. It is a Megatron-LM fork with sparse AdamS communication, density scheduling, CPU offload variants, and checked-in Slurm launchers for the current VISTA experiments.
+`SCAPE` is the SC26 AD/AE artifact repo for SCAPE. It is a Megatron-LM fork with sparse AdamS communication, density scheduling, CPU offload variants, and checked-in Slurm launchers for the current VISTA experiments.
 
 ## Artifact Scope
 
