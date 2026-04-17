@@ -1,6 +1,6 @@
 # SCAPE
 
-`SCAPE` is the SC26 AD/AE artifact repo for SCAPE. It is a Megatron-LM fork with sparse AdamS communication, density scheduling, CPU offload variants, and checked-in Slurm launchers for the current VISTA experiments.
+`SCAPE` is the SC26 AD/AE artifact repo for SCAPE. It is a Megatron-LM fork with sparse AdamS communication, density scheduling, CPU offload variants, and checked-in Slurm launchers for the running experiments on TACC VISTA supercomputer.
 
 ## Artifact Scope
 
@@ -13,7 +13,7 @@ This checkout still contains the usual Megatron-LM codebase, but the artifact is
 
 The rest of the repository, including `docs/`, `examples/`, `scripts/`, and `tests/`, is mostly upstream/reference material from the fork.
 
-## Current Repository Layout
+## Repository Layout
 
 Top-level paths that matter most for the artifact:
 
@@ -23,7 +23,7 @@ Top-level paths that matter most for the artifact:
 - `tools/`
 - `README.md`
 
-Current `slurm_scripts/vista/` layout:
+`slurm_scripts/vista/` layout:
 
 ```text
 slurm_scripts/vista/
@@ -121,7 +121,7 @@ Memory studies:
 - SCAPE with distributed optimizer and full-model offload
 - SCAPE with distributed optimizer and residual-model offload
 
-## Running the Current Launchers
+## Running the Launchers
 
 The checked-in launchers now invoke `pretrain_gpt.py` from the current working directory. Run them from the repository root.
 
@@ -222,18 +222,50 @@ apptainer exec --nv \
   bash
 ```
 
-If needed, pull the base image first:
+Pull the base image first:
 
 ```bash
 apptainer pull /path/to/pytorch_26.01-py3.sif docker://nvcr.io/nvidia/pytorch:26.01-py3
 ```
 
-Credential examples:
+If you want the pulled container to permanently include the packages needed for HF export and downstream evaluation, convert it to a writable sandbox and install them there. A `.sif` image is read-only, so persistent package installation should be done in a sandbox image.
 
 ```bash
-echo <huggingface_token> > $HOME/hf_token
-echo <wandb_api_key> > $HOME/wandb_key
+export CONTAINER_SIF=/path/to/pytorch_26.01-py3.sif
+export CONTAINER_SANDBOX=/path/to/pytorch_26.01-py3-sandbox
+
+apptainer build --sandbox ${CONTAINER_SANDBOX} ${CONTAINER_SIF}
 ```
+
+Install the required Python packages into the sandboxed container:
+
+```bash
+export REPO_ROOT=/path/to/SCAPE_SC26_ADAE
+export DATA_ROOT=/path/to/data
+export CKPT_ROOT=/path/to/ckpts
+export CONTAINER_SANDBOX=/path/to/pytorch_26.01-py3-sandbox
+
+ml tacc-apptainer
+apptainer exec --nv --writable --fakeroot \
+  --bind ${REPO_ROOT}:${REPO_ROOT} \
+  --bind ${DATA_ROOT}:${DATA_ROOT} \
+  --bind ${CKPT_ROOT}:${CKPT_ROOT} \
+  ${CONTAINER_SANDBOX} \
+  bash -lc 'python3 -m pip install --upgrade pip setuptools wheel && python3 -m pip install datasets transformers accelerate lm-eval'
+```
+
+After that, point `CONTAINER_CMD` at the sandbox path if you want the launchers or conversion workflow to use the updated container.
+
+```bash
+CONTAINER_CMD="apptainer exec --nv --bind /path/to/repo --bind /path/to/data --bind /path/to/ckpts --fakeroot /path/to/pytorch_26.01-py3-sandbox"
+```
+
+Notes:
+
+- `datasets`, `transformers`, and `lm-eval` are the minimum additions requested for the current HF export and evaluation workflow.
+- `accelerate` is recommended alongside `lm-eval` and `transformers`.
+- `tools/run_downstream_lm_eval.sh` still expects the `lm_eval` command to be available in the runtime environment where it is executed.
+
 
 ## SlimPajama-6B Download and Preprocessing
 
@@ -273,6 +305,60 @@ export OUTPUT_PREFIX=/path/to/processed/slimpajama/slimpajama6b_llama2
 export TOKENIZER_MODEL=meta-llama/Llama-2-7b-hf
 export WORKERS=32
 bash tools/run_prepare_slimpajama_6b.sh
+```
+
+The helper prints the final dataset prefix as:
+
+```text
+DATA_PATH=${OUTPUT_PREFIX}_text_document
+```
+
+## OpenWebText Download and Preprocessing
+
+The current GPT launchers can use a Megatron preprocessed OpenWebText prefix such as:
+
+- `${OUTPUT_PREFIX}_text_document.bin`
+- `${OUTPUT_PREFIX}_text_document.idx`
+
+For GPT runs, `DATA_PATH` should point at the shared prefix without the suffix, for example:
+
+```bash
+DATA_PATH=/path/to/processed/openwebtext/openwebtext_gpt2_text_document
+```
+
+Current checked-in helpers for this workflow:
+
+- `tools/download_openwebtext.py`
+- `tools/run_prepare_openwebtext.sh`
+- `tools/preprocess_data.py`
+
+`tools/download_openwebtext.py` streams `Skylion007/openwebtext`, config `plain_text`, split `train` by default and writes one JSON object per line with a single `text` field.
+
+`tools/run_prepare_openwebtext.sh` currently honors these variables:
+
+- `RAW_DIR`
+- `RAW_JSONL`
+- `OUTPUT_PREFIX`
+- `GPT2_VOCAB_FILE`
+- `GPT2_MERGE_FILE`
+- `DATASET_NAME`
+- `DATASET_CONFIG`
+- `SPLIT`
+- `WORKERS`
+- `PYTHON_BIN`
+- `VENV_ACTIVATE`
+
+The downloader requires the `datasets` package to be installed in the environment where you run it.
+
+Example preprocessing workflow:
+
+```bash
+cd /path/to/SCAPE_SC26_ADAE
+export RAW_DIR=/path/to/raw/openwebtext
+export OUTPUT_PREFIX=/path/to/processed/openwebtext/openwebtext_gpt2
+export GPT2_VOCAB_FILE=/path/to/gpt2-vocab.json
+export GPT2_MERGE_FILE=/path/to/gpt2-merges.txt
+bash tools/run_prepare_openwebtext.sh
 ```
 
 The helper prints the final dataset prefix as:
@@ -343,6 +429,8 @@ Current artifact-relevant helpers include:
 - `tools/summarize_topk_runtime.py`
 - `tools/download_slimpajama_6b.py`
 - `tools/run_prepare_slimpajama_6b.sh`
+- `tools/download_openwebtext.py`
+- `tools/run_prepare_openwebtext.sh`
 - `tools/run_convert_torch_dist_to_hf.sh`
 - `tools/run_downstream_lm_eval.sh`
 
