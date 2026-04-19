@@ -198,6 +198,12 @@ Important portability note:
 
 ## Container Setup
 
+Pull the base image first:
+
+```bash
+apptainer pull /path/to/pytorch_26.01-py3.sif docker://nvcr.io/nvidia/pytorch:26.01-py3
+```
+
 The launchers currently use a placeholder command of the form:
 
 ```bash
@@ -222,50 +228,22 @@ apptainer exec --nv \
   bash
 ```
 
-Pull the base image first:
-
-```bash
-apptainer pull /path/to/pytorch_26.01-py3.sif docker://nvcr.io/nvidia/pytorch:26.01-py3
-```
-
-If you want the pulled container to permanently include the packages needed for HF export and downstream evaluation, convert it to a writable sandbox and install them there. A `.sif` image is read-only, so persistent package installation should be done in a sandbox image.
-
-```bash
-export CONTAINER_SIF=/path/to/pytorch_26.01-py3.sif
-export CONTAINER_SANDBOX=/path/to/pytorch_26.01-py3-sandbox
-
-apptainer build --sandbox ${CONTAINER_SANDBOX} ${CONTAINER_SIF}
-```
-
 Install the required Python packages into the sandboxed container:
 
 ```bash
 export REPO_ROOT=/path/to/SCAPE_SC26_ADAE
 export DATA_ROOT=/path/to/data
 export CKPT_ROOT=/path/to/ckpts
-export CONTAINER_SANDBOX=/path/to/pytorch_26.01-py3-sandbox
+export CONTAINER=/path/to/pytorch_26.01-py3.sif
 
 ml tacc-apptainer
 apptainer exec --nv --writable --fakeroot \
   --bind ${REPO_ROOT}:${REPO_ROOT} \
   --bind ${DATA_ROOT}:${DATA_ROOT} \
   --bind ${CKPT_ROOT}:${CKPT_ROOT} \
-  ${CONTAINER_SANDBOX} \
-  bash -lc 'python3 -m pip install --upgrade pip setuptools wheel && python3 -m pip install datasets transformers accelerate lm-eval'
+  ${CONTAINER} \
+  bash -lc 'python3 -m pip install -r requirements-extra.txt'
 ```
-
-After that, point `CONTAINER_CMD` at the sandbox path if you want the launchers or conversion workflow to use the updated container.
-
-```bash
-CONTAINER_CMD="apptainer exec --nv --bind /path/to/repo --bind /path/to/data --bind /path/to/ckpts --fakeroot /path/to/pytorch_26.01-py3-sandbox"
-```
-
-Notes:
-
-- `datasets`, `transformers`, and `lm-eval` are the minimum additions requested for the current HF export and evaluation workflow.
-- `accelerate` is recommended alongside `lm-eval` and `transformers`.
-- `tools/run_downstream_lm_eval.sh` still expects the `lm_eval` command to be available in the runtime environment where it is executed.
-
 
 ## SlimPajama-6B Download and Preprocessing
 
